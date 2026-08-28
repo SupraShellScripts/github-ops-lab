@@ -1,0 +1,133 @@
+name: Public fork maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Operation mode
+        required: true
+        default: audit
+        type: choice
+        options:
+          - audit
+          - apply
+      create_ci_issues:
+        description: Create missing fork-local CI work items during apply
+        required: true
+        default: true
+        type: boolean
+      confirmation:
+        description: For apply, enter APPLY-PUBLIC-FORK-MAINTENANCE
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-fork-maintenance
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Read-only topology and policy audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+
+      - name: Require main for apply
+        if: ${{ inputs.mode == 'apply' }}
+        shell: pwsh
+        run: |
+          if ('${{ github.ref }}' -ne 'refs/heads/main') {
+            throw 'Apply is permitted only from refs/heads/main.'
+          }
+          if ('${{ inputs.confirmation }}' -ne 'APPLY-PUBLIC-FORK-MAINTENANCE') {
+            throw 'Apply confirmation phrase does not match.'
+          }
+
+      - name: Run read-only audit
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./candidates/Repair-UpstreamForks.ps1 -AuditOnly
+
+  apply-supracraft:
+    name: Apply SupraCraft fork maintenance
+    if: ${{ inputs.mode == 'apply' }}
+    needs: audit
+    runs-on: ubuntu-latest
+    environment: public-ops-write
+    steps:
+      - name: Check out exact main revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Mint scoped SupraCraft installation token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ secrets.PUBLIC_OPS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PUBLIC_OPS_APP_PRIVATE_KEY }}
+          owner: SupraCraft
+          repositories: |
+            VanillaCord
+            Bridge
+
+      - name: Apply validated SupraCraft maintenance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_MUTATION_TOKEN: ${{ steps.app-token.outputs.token }}
+          CREATE_CI_ISSUES: ${{ inputs.create_ci_issues }}
+        run: |
+          $invoke = @{
+            Fork = @('SupraCraft/VanillaCord', 'SupraCraft/Bridge')
+          }
+          if ($env:CREATE_CI_ISSUES -eq 'true') {
+            $invoke.CreateCiIssues = $true
+          }
+          ./candidates/Repair-UpstreamForks.ps1 @invoke
+
+  apply-sempersupra:
+    name: Apply SemperSupra fork maintenance
+    if: ${{ inputs.mode == 'apply' }}
+    needs: audit
+    runs-on: ubuntu-latest
+    environment: public-ops-write
+    steps:
+      - name: Check out exact main revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Mint scoped SemperSupra installation token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ secrets.PUBLIC_OPS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PUBLIC_OPS_APP_PRIVATE_KEY }}
+          owner: SemperSupra
+          repositories: |
+            OpenXcom
+
+      - name: Apply validated SemperSupra maintenance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_MUTATION_TOKEN: ${{ steps.app-token.outputs.token }}
+          CREATE_CI_ISSUES: ${{ inputs.create_ci_issues }}
+        run: |
+          $invoke = @{
+            Fork = @('SemperSupra/OpenXcom')
+          }
+          if ($env:CREATE_CI_ISSUES -eq 'true') {
+            $invoke.CreateCiIssues = $true
+          }
+          ./candidates/Repair-UpstreamForks.ps1 @invoke
