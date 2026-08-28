@@ -39,9 +39,12 @@ jobs:
       - name: Require main and confirmation for apply
         if: ${{ inputs.mode == 'apply' }}
         shell: pwsh
+        env:
+          REQUEST_REF: ${{ github.ref }}
+          APPLY_CONFIRMATION: ${{ inputs.confirmation }}
         run: |
-          if ('${{ github.ref }}' -ne 'refs/heads/main') { throw 'Apply is permitted only from refs/heads/main.' }
-          if ('${{ inputs.confirmation }}' -ne 'APPLY-PUBLIC-FORK-MAINTENANCE') { throw 'Apply confirmation phrase does not match.' }
+          if ($env:REQUEST_REF -ne 'refs/heads/main') { throw 'Apply is permitted only from refs/heads/main.' }
+          if ($env:APPLY_CONFIRMATION -ne 'APPLY-PUBLIC-FORK-MAINTENANCE') { throw 'Apply confirmation phrase does not match.' }
 
       - name: Run read-only audit
         shell: pwsh
@@ -72,6 +75,8 @@ jobs:
           repositories: |
             VanillaCord
             Bridge
+          permission-administration: write
+          permission-issues: write
 
       - name: Apply validated SupraCraft maintenance
         shell: pwsh
@@ -105,6 +110,8 @@ jobs:
           private-key: ${{ secrets.PUBLIC_OPS_APP_PRIVATE_KEY }}
           owner: SemperSupra
           repositories: OpenXcom
+          permission-administration: write
+          permission-issues: write
 
       - name: Apply validated SemperSupra maintenance
         shell: pwsh
