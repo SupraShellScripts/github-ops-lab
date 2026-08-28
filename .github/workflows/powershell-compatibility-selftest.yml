@@ -1,0 +1,79 @@
+name: PowerShell compatibility self-test
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/powershell/**'
+      - 'tests/fixtures/powershell-compat/**'
+      - '.github/workflows/powershell-compatibility*.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/powershell/**'
+      - 'tests/fixtures/powershell-compat/**'
+      - '.github/workflows/powershell-compatibility*.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  real-windows-engines:
+    name: Real WinPS 5.1 vs PS7
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+
+      - name: Scan with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
+            throw "Expected Windows PowerShell 5.1, got $($PSVersionTable.PSVersion)"
+          }
+          ./scripts/powershell/Test-PowerShellCompatibility.ps1 -Root ./tests/fixtures/powershell-compat -OutputPath ./evidence/winps51-windows.json -Lane winps51-windows
+
+      - name: Scan with PowerShell 7
+        shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion.Major -lt 7) { throw "Expected PowerShell 7+, got $($PSVersionTable.PSVersion)" }
+          ./scripts/powershell/Test-PowerShellCompatibility.ps1 -Root ./tests/fixtures/powershell-compat -OutputPath ./evidence/ps7-windows.json -Lane ps7-windows
+
+      - name: Prove expected compatibility distinction
+        shell: pwsh
+        run: |
+          ./scripts/powershell/Compare-PowerShellCompatibility.ps1 -ResultsRoot ./evidence -OutputPath ./evidence/comparison.json
+          $win = Get-Content ./evidence/winps51-windows.json -Raw | ConvertFrom-Json
+          $ps7 = Get-Content ./evidence/ps7-windows.json -Raw | ConvertFrom-Json
+          $comparison = Get-Content ./evidence/comparison.json -Raw | ConvertFrom-Json
+          $winCross = $win.files | Where-Object path -eq 'cross-compatible.ps1'
+          $winPs7Only = $win.files | Where-Object path -eq 'ps7-only.ps1'
+          $ps7Cross = $ps7.files | Where-Object path -eq 'cross-compatible.ps1'
+          $ps7Only = $ps7.files | Where-Object path -eq 'ps7-only.ps1'
+          if (-not $winCross.parseCompatible) { throw 'Cross-compatible fixture failed WinPS 5.1.' }
+          if ($winPs7Only.parseCompatible) { throw 'PS7-only fixture unexpectedly parsed in WinPS 5.1.' }
+          if (-not $ps7Cross.parseCompatible -or -not $ps7Only.parseCompatible) { throw 'Expected fixtures to parse in PS7.' }
+          if ($comparison.crossEngineParseFailureCount -ne 1) { throw 'Expected exactly one cross-engine parse incompatibility.' }
+
+      - name: Upload self-test evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: powershell-compat-selftest-windows
+          path: evidence/*.json
+          retention-days: 14
+
+  portable-ps7:
+    name: Portable PS7 parse (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion.Major -lt 7) { throw "Expected PowerShell 7+, got $($PSVersionTable.PSVersion)" }
+          ./scripts/powershell/Test-PowerShellCompatibility.ps1 -Root ./tests/fixtures/powershell-compat -OutputPath ./evidence/ps7-portable.json -Lane 'ps7-${{ matrix.os }}' -FailOnParseError
