@@ -42,7 +42,7 @@ function Get-WorkflowRelationships {
     $lineNumber = 0
     foreach ($line in ($Text -split "`r?`n")) {
         $lineNumber++
-        if ($line -notmatch '^\s*uses\s*:\s*(.+?)\s*$') { continue }
+        if ($line -notmatch '^\s*(?:-\s*)?uses\s*:\s*(.+?)\s*$') { continue }
 
         $raw = $Matches[1].Trim()
         if (($raw.StartsWith("'") -and $raw.EndsWith("'")) -or ($raw.StartsWith('"') -and $raw.EndsWith('"'))) {
