@@ -78,11 +78,20 @@ jobs:
 
       - name: Scan without executing target scripts
         shell: ${{ matrix.shell }}
+        env:
+          TARGET_RELATIVE_PATH: ${{ inputs.path }}
+          LANE: ${{ matrix.lane }}
         run: |
+          $targetBase = [IO.Path]::GetFullPath((Join-Path $PWD 'target'))
+          $scanRoot = [IO.Path]::GetFullPath((Join-Path $targetBase $env:TARGET_RELATIVE_PATH))
+          $prefix = $targetBase.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+          if (($scanRoot -ne $targetBase) -and -not $scanRoot.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Requested path escapes the checked-out target repository.'
+          }
           & ./validator/scripts/powershell/Test-PowerShellCompatibility.ps1 `
-            -Root ./target/${{ inputs.path }} `
-            -OutputPath ./evidence/${{ matrix.lane }}.json `
-            -Lane '${{ matrix.lane }}'
+            -Root $scanRoot `
+            -OutputPath (Join-Path $PWD ('evidence/{0}.json' -f $env:LANE)) `
+            -Lane $env:LANE
 
       - name: Upload lane evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
