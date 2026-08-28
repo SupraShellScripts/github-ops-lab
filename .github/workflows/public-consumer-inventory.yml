@@ -40,13 +40,17 @@ jobs:
         run: |
           $doc = Get-Content ./out-fixture/public-validation-consumers.json -Raw | ConvertFrom-Json
           if ($doc.authority -ne 'derived-non-authoritative') { throw 'Authority marker missing.' }
-          if (@($doc.relationships).Count -ne 6) { throw "Expected 6 relationships, got $(@($doc.relationships).Count)." }
+          if ($doc.schemaVersion -ne '1.1') { throw 'Expected schema version 1.1.' }
+          if (@($doc.relationships).Count -ne 8) { throw "Expected 8 relationships, got $(@($doc.relationships).Count)." }
           if (@($doc.relationships | Where-Object capability -eq 'github-actions-security').Count -ne 1) { throw 'zizmor capability not detected.' }
           if (@($doc.relationships | Where-Object capability -eq 'repository-security-posture').Count -ne 1) { throw 'Scorecard capability not detected.' }
           if (@($doc.relationships | Where-Object capability -eq 'dependency-review').Count -ne 1) { throw 'Dependency review capability not detected.' }
           if (@($doc.relationships | Where-Object capability -eq 'powershell-compatibility').Count -ne 1) { throw 'PowerShell compatibility capability not detected.' }
-          if (@($doc.relationships | Where-Object pinStatus -eq 'immutable-sha').Count -ne 3) { throw 'Immutable SHA classification mismatch.' }
+          if (@($doc.relationships | Where-Object pinStatus -eq 'immutable-sha').Count -ne 4) { throw 'Immutable SHA classification mismatch.' }
           if (@($doc.relationships | Where-Object pinStatus -eq 'mutable-ref').Count -ne 2) { throw 'Mutable ref classification mismatch.' }
+          if (@($doc.relationships | Where-Object pinStatus -eq 'same-repository-reference').Count -ne 1) { throw 'Same-repository classification mismatch.' }
+          $commented = @($doc.relationships | Where-Object reference -eq 'actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8')
+          if ($commented.Count -ne 2) { throw 'Inline YAML comment was not normalized away.' }
           $ambiguous = @($doc.relationships | Where-Object observation -eq 'ambiguous-not-asserted')
           if ($ambiguous.Count -ne 1) { throw 'Ambiguous uses reference was not conservatively classified.' }
 
