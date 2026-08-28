@@ -8,9 +8,7 @@ on:
         required: true
         default: audit
         type: choice
-        options:
-          - audit
-          - apply
+        options: [audit, apply]
       create_ci_issues:
         description: Create missing fork-local CI work items during apply
         required: true
@@ -38,22 +36,18 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Require main for apply
+      - name: Require main and confirmation for apply
         if: ${{ inputs.mode == 'apply' }}
         shell: pwsh
         run: |
-          if ('${{ github.ref }}' -ne 'refs/heads/main') {
-            throw 'Apply is permitted only from refs/heads/main.'
-          }
-          if ('${{ inputs.confirmation }}' -ne 'APPLY-PUBLIC-FORK-MAINTENANCE') {
-            throw 'Apply confirmation phrase does not match.'
-          }
+          if ('${{ github.ref }}' -ne 'refs/heads/main') { throw 'Apply is permitted only from refs/heads/main.' }
+          if ('${{ inputs.confirmation }}' -ne 'APPLY-PUBLIC-FORK-MAINTENANCE') { throw 'Apply confirmation phrase does not match.' }
 
       - name: Run read-only audit
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./candidates/Repair-UpstreamForks.ps1 -AuditOnly
+        run: ./scripts/github/Repair-UpstreamForks.ps1 -AuditOnly
 
   apply-supracraft:
     name: Apply SupraCraft fork maintenance
@@ -86,13 +80,9 @@ jobs:
           GH_MUTATION_TOKEN: ${{ steps.app-token.outputs.token }}
           CREATE_CI_ISSUES: ${{ inputs.create_ci_issues }}
         run: |
-          $invoke = @{
-            Fork = @('SupraCraft/VanillaCord', 'SupraCraft/Bridge')
-          }
-          if ($env:CREATE_CI_ISSUES -eq 'true') {
-            $invoke.CreateCiIssues = $true
-          }
-          ./candidates/Repair-UpstreamForks.ps1 @invoke
+          $invoke = @{ Fork = @('SupraCraft/VanillaCord', 'SupraCraft/Bridge') }
+          if ($env:CREATE_CI_ISSUES -eq 'true') { $invoke.CreateCiIssues = $true }
+          ./scripts/github/Repair-UpstreamForks.ps1 @invoke
 
   apply-sempersupra:
     name: Apply SemperSupra fork maintenance
@@ -114,8 +104,7 @@ jobs:
           client-id: ${{ secrets.PUBLIC_OPS_APP_CLIENT_ID }}
           private-key: ${{ secrets.PUBLIC_OPS_APP_PRIVATE_KEY }}
           owner: SemperSupra
-          repositories: |
-            OpenXcom
+          repositories: OpenXcom
 
       - name: Apply validated SemperSupra maintenance
         shell: pwsh
@@ -124,10 +113,6 @@ jobs:
           GH_MUTATION_TOKEN: ${{ steps.app-token.outputs.token }}
           CREATE_CI_ISSUES: ${{ inputs.create_ci_issues }}
         run: |
-          $invoke = @{
-            Fork = @('SemperSupra/OpenXcom')
-          }
-          if ($env:CREATE_CI_ISSUES -eq 'true') {
-            $invoke.CreateCiIssues = $true
-          }
-          ./candidates/Repair-UpstreamForks.ps1 @invoke
+          $invoke = @{ Fork = @('SemperSupra/OpenXcom') }
+          if ($env:CREATE_CI_ISSUES -eq 'true') { $invoke.CreateCiIssues = $true }
+          ./scripts/github/Repair-UpstreamForks.ps1 @invoke
