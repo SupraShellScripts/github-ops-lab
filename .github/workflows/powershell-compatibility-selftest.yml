@@ -17,6 +17,12 @@ permissions:
   contents: read
 
 jobs:
+  reusable-workflow-smoke:
+    name: Reusable workflow smoke
+    uses: ./.github/workflows/powershell-compatibility.yml
+    with:
+      path: tests/fixtures/powershell-compat
+
   real-windows-engines:
     name: Real WinPS 5.1 vs PS7
     runs-on: windows-latest
