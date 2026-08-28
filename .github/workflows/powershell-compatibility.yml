@@ -1,0 +1,131 @@
+name: PowerShell compatibility
+
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: Public owner/repo to validate; empty means caller repository
+        required: false
+        type: string
+        default: ''
+      ref:
+        description: Git ref/SHA to validate; empty means caller SHA
+        required: false
+        type: string
+        default: ''
+      path:
+        description: Relative path within target repository
+        required: false
+        type: string
+        default: '.'
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Public owner/repo to validate
+        required: true
+        type: string
+        default: SupraShellScripts/github-ops-lab
+      ref:
+        description: Git ref/SHA to validate
+        required: true
+        type: string
+        default: main
+      path:
+        description: Relative path within target repository
+        required: true
+        type: string
+        default: .
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: ${{ matrix.lane }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: winps51-windows
+            os: windows-latest
+            shell: powershell
+          - lane: ps7-windows
+            os: windows-latest
+            shell: pwsh
+          - lane: ps7-linux
+            os: ubuntu-latest
+            shell: pwsh
+          - lane: ps7-macos
+            os: macos-latest
+            shell: pwsh
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out validator
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: SupraShellScripts/github-ops-lab
+          ref: main
+          path: validator
+          persist-credentials: false
+
+      - name: Check out public target
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: ${{ inputs.repository != '' && inputs.repository || github.repository }}
+          ref: ${{ inputs.ref != '' && inputs.ref || github.sha }}
+          path: target
+          persist-credentials: false
+
+      - name: Scan without executing target scripts
+        shell: ${{ matrix.shell }}
+        run: |
+          & ./validator/scripts/powershell/Test-PowerShellCompatibility.ps1 `
+            -Root ./target/${{ inputs.path }} `
+            -OutputPath ./evidence/${{ matrix.lane }}.json `
+            -Lane '${{ matrix.lane }}'
+
+      - name: Upload lane evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ps-compat-${{ matrix.lane }}
+          path: evidence/${{ matrix.lane }}.json
+          if-no-files-found: error
+          retention-days: 14
+
+  compare:
+    name: Compare WinPS 5.1 and PS7 evidence
+    needs: scan
+    if: ${{ always() && needs.scan.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out validator
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: SupraShellScripts/github-ops-lab
+          ref: main
+          path: validator
+          persist-credentials: false
+
+      - name: Download lane evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: ps-compat-*
+          path: lane-evidence
+          merge-multiple: true
+
+      - name: Compare required Windows engines
+        shell: pwsh
+        run: |
+          ./validator/scripts/powershell/Compare-PowerShellCompatibility.ps1 `
+            -ResultsRoot ./lane-evidence `
+            -OutputPath ./comparison/powershell-compatibility.json `
+            -RequireWinPS51AndPS7
+
+      - name: Upload comparison evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: powershell-compatibility-comparison
+          path: comparison/powershell-compatibility.json
+          if-no-files-found: warn
+          retention-days: 14
