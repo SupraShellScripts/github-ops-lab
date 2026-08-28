@@ -70,7 +70,10 @@ function Test-GhPath {
         [Parameter(Mandatory)][string]$Path
     )
     & gh api "repos/$Repo/contents/$Path" --silent 2>$null
-    return ($LASTEXITCODE -eq 0)
+    $found = ($LASTEXITCODE -eq 0)
+    # A missing optional policy path is expected probe data, not a script failure.
+    $global:LASTEXITCODE = 0
+    return $found
 }
 
 function Get-GhTextFile {
