@@ -22,7 +22,9 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [switch]$AuditOnly,
-    [switch]$CreateCiIssues
+    [switch]$CreateCiIssues,
+    [ValidateSet('SupraCraft/VanillaCord', 'SupraCraft/Bridge', 'SemperSupra/OpenXcom')]
+    [string[]]$Fork
 )
 
 Set-StrictMode -Version Latest
@@ -38,6 +40,28 @@ function Invoke-GhJson {
     }
     if (-not $raw) { return $null }
     return ($raw | Out-String | ConvertFrom-Json)
+}
+
+function Invoke-GhMutation {
+    param(
+        [Parameter(Mandatory)][string[]]$Args
+    )
+
+    if (-not $env:GH_MUTATION_TOKEN) {
+        throw 'Mutation requested but GH_MUTATION_TOKEN is not set.'
+    }
+
+    $readToken = $env:GH_TOKEN
+    try {
+        $env:GH_TOKEN = $env:GH_MUTATION_TOKEN
+        & gh @Args
+        if ($LASTEXITCODE -ne 0) {
+            throw "gh $($Args -join ' ') mutation failed."
+        }
+    }
+    finally {
+        $env:GH_TOKEN = $readToken
+    }
 }
 
 function Test-GhPath {
@@ -168,6 +192,13 @@ Public CI may contain ordinary public-safe tests only. Do not publish comprehens
     }
 )
 
+if ($Fork) {
+    $forks = @($forks | Where-Object { $_.Fork -in $Fork })
+    if ($forks.Count -eq 0) {
+        throw 'No configured forks matched -Fork.'
+    }
+}
+
 $policyPaths = @(
     'AI_POLICY.md',
     '.github/AI_POLICY.md',
@@ -212,15 +243,11 @@ $results = foreach ($entry in $forks) {
 
     if (-not $AuditOnly -and -not $repo.has_issues) {
         if ($PSCmdlet.ShouldProcess($entry.Fork, 'Enable fork-local GitHub Issues')) {
-            & gh api --method PATCH "repos/$($entry.Fork)" -F has_issues=true --silent
-            if ($LASTEXITCODE -ne 0) {
-                throw "Failed to enable Issues for $($entry.Fork)"
-            }
+            Invoke-GhMutation -Args @('api', '--method', 'PATCH', "repos/$($entry.Fork)", '-F', 'has_issues=true', '--silent')
             Write-Host 'Enabled fork-local Issues.' -ForegroundColor Green
         }
     }
 
-    # Search only explicit/common policy locations. Absence is UNKNOWN, never "allowed".
     $policyHits = @()
     foreach ($path in $policyPaths) {
         if (Test-GhPath -Repo $actualParent -Path $path) {
@@ -253,15 +280,11 @@ $results = foreach ($entry in $forks) {
     }
 
     if ($CreateCiIssues -and -not $AuditOnly) {
-        # Idempotence: do not create a second issue with the same title.
         $existing = & gh issue list --repo $entry.Fork --state all --search ('"{0}" in:title' -f $entry.CiTitle) --json number,title --limit 20 | ConvertFrom-Json
         $match = @($existing | Where-Object title -eq $entry.CiTitle)
         if ($match.Count -eq 0) {
             if ($PSCmdlet.ShouldProcess($entry.Fork, "Create CI issue '$($entry.CiTitle)'")) {
-                & gh issue create --repo $entry.Fork --title $entry.CiTitle --body $entry.CiBody
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Failed to create CI issue in $($entry.Fork)"
-                }
+                Invoke-GhMutation -Args @('issue', 'create', '--repo', $entry.Fork, '--title', $entry.CiTitle, '--body', $entry.CiBody)
             }
         } else {
             Write-Host "CI issue already exists as #$($match[0].number); skipped."
@@ -295,8 +318,12 @@ Useful invocations:
   # Audit only; no changes
   ./Repair-UpstreamForks.ps1 -AuditOnly
 
-  # Enable Issues on the three forks
+  # Mutations require GH_MUTATION_TOKEN in addition to the read-only GH_TOKEN.
+  # Enable Issues on the configured forks
   ./Repair-UpstreamForks.ps1
+
+  # Limit a mutation to selected forks
+  ./Repair-UpstreamForks.ps1 -Fork SupraCraft/VanillaCord,SupraCraft/Bridge -CreateCiIssues
 
   # Enable Issues and create the fork-local CI work items idempotently
   ./Repair-UpstreamForks.ps1 -CreateCiIssues
