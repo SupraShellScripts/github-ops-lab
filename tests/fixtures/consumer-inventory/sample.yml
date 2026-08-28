@@ -1,0 +1,18 @@
+name: Fixture
+on: [push]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054
+      - uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc
+      - uses: actions/dependency-review-action@v5
+  powershell:
+    uses: SupraShellScripts/github-ops-lab/.github/workflows/powershell-compatibility.yml@main
+  ambiguous:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ${{ inputs.dynamic_action }}
