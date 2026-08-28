@@ -21,10 +21,26 @@ function Get-Capability {
     return 'other-action-or-workflow'
 }
 
+function Normalize-UsesReference {
+    param([Parameter(Mandatory = $true)][string]$Raw)
+
+    $value = $Raw.Trim()
+    if (($value.StartsWith("'") -and $value.EndsWith("'")) -or ($value.StartsWith('"') -and $value.EndsWith('"'))) {
+        return $value.Substring(1, $value.Length - 2)
+    }
+
+    # For an unquoted YAML scalar, whitespace followed by # begins an inline comment.
+    # Strip the comment before interpreting the action/workflow ref so a documented
+    # immutable SHA remains an immutable SHA.
+    $value = $value -replace '\s+#.*$', ''
+    return $value.Trim()
+}
+
 function Get-PinStatus {
     param([Parameter(Mandatory = $true)][string]$Reference)
 
     if ($Reference -match '\$\{\{') { return 'dynamic-or-ambiguous' }
+    if ($Reference.StartsWith('./')) { return 'same-repository-reference' }
     if ($Reference -notmatch '@([^\s#]+)$') { return 'missing-ref' }
     $ref = $Matches[1]
     if ($ref -match '^[0-9a-fA-F]{40}$') { return 'immutable-sha' }
@@ -44,11 +60,7 @@ function Get-WorkflowRelationships {
         $lineNumber++
         if ($line -notmatch '^\s*(?:-\s*)?uses\s*:\s*(.+?)\s*$') { continue }
 
-        $raw = $Matches[1].Trim()
-        if (($raw.StartsWith("'") -and $raw.EndsWith("'")) -or ($raw.StartsWith('"') -and $raw.EndsWith('"'))) {
-            $raw = $raw.Substring(1, $raw.Length - 2)
-        }
-
+        $raw = Normalize-UsesReference -Raw $Matches[1]
         $status = Get-PinStatus -Reference $raw
         $results += [pscustomobject]@{
             repository   = $Repository
@@ -135,12 +147,13 @@ $jsonPath = Join-Path $OutputDirectory 'public-validation-consumers.json'
 $markdownPath = Join-Path $OutputDirectory 'public-validation-consumers.md'
 
 $document = [ordered]@{
-    schemaVersion = '1.0'
+    schemaVersion = '1.1'
     authority = 'derived-non-authoritative'
     semantics = [ordered]@{
         sourceOfTruth = 'consumer repository workflows'
         inventory = 'observation only; regenerate instead of hand editing'
         ambiguous = 'dynamic or ambiguous uses references are reported but not asserted as relationships'
+        sameRepository = 'relative ./ uses references execute from the same repository revision and do not require an external action ref'
     }
     generatedAtUtc = [DateTime]::UtcNow.ToString('o')
     repositoriesScanned = $repositoriesScanned
