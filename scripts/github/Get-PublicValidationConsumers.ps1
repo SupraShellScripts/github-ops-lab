@@ -162,7 +162,7 @@ $lines = @(
     '| --- | --- | --- | --- | --- | --- |'
 )
 foreach ($item in $relationships) {
-    $lines += "| $($item.repository) | `$($item.workflowPath)` | $($item.capability) | `$($item.reference)` | $($item.pinStatus) | $($item.observation) |"
+    $lines += "| $($item.repository) | $($item.workflowPath) | $($item.capability) | $($item.reference) | $($item.pinStatus) | $($item.observation) |"
 }
 $lines -join "`n" | Set-Content -LiteralPath $markdownPath -Encoding utf8
 
