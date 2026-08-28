@@ -1,0 +1,80 @@
+name: Public validation consumer inventory
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/github/Get-PublicValidationConsumers.ps1'
+      - 'tests/fixtures/consumer-inventory/**'
+      - '.github/workflows/public-consumer-inventory.yml'
+      - 'docs/consumer-inventory.md'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/github/Get-PublicValidationConsumers.ps1'
+      - 'tests/fixtures/consumer-inventory/**'
+      - '.github/workflows/public-consumer-inventory.yml'
+      - 'docs/consumer-inventory.md'
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    name: Inventory parser self-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+
+      - name: Generate fixture inventory
+        shell: pwsh
+        run: ./scripts/github/Get-PublicValidationConsumers.ps1 -FixtureRoot ./tests/fixtures/consumer-inventory -OutputDirectory ./out-fixture
+
+      - name: Prove detection and conservative classification
+        shell: pwsh
+        run: |
+          $doc = Get-Content ./out-fixture/public-validation-consumers.json -Raw | ConvertFrom-Json
+          if ($doc.authority -ne 'derived-non-authoritative') { throw 'Authority marker missing.' }
+          if (@($doc.relationships).Count -ne 6) { throw "Expected 6 relationships, got $(@($doc.relationships).Count)." }
+          if (@($doc.relationships | Where-Object capability -eq 'github-actions-security').Count -ne 1) { throw 'zizmor capability not detected.' }
+          if (@($doc.relationships | Where-Object capability -eq 'repository-security-posture').Count -ne 1) { throw 'Scorecard capability not detected.' }
+          if (@($doc.relationships | Where-Object capability -eq 'dependency-review').Count -ne 1) { throw 'Dependency review capability not detected.' }
+          if (@($doc.relationships | Where-Object capability -eq 'powershell-compatibility').Count -ne 1) { throw 'PowerShell compatibility capability not detected.' }
+          if (@($doc.relationships | Where-Object pinStatus -eq 'immutable-sha').Count -ne 3) { throw 'Immutable SHA classification mismatch.' }
+          if (@($doc.relationships | Where-Object pinStatus -eq 'mutable-ref').Count -ne 2) { throw 'Mutable ref classification mismatch.' }
+          $ambiguous = @($doc.relationships | Where-Object observation -eq 'ambiguous-not-asserted')
+          if ($ambiguous.Count -ne 1) { throw 'Ambiguous uses reference was not conservatively classified.' }
+
+  portfolio:
+    name: Generate public portfolio observation
+    if: ${{ github.event_name != 'pull_request' }}
+    needs: selftest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+
+      - name: Generate derived inventory
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/github/Get-PublicValidationConsumers.ps1 -OutputDirectory ./out
+
+      - name: Publish report to step summary
+        shell: bash
+        run: cat ./out/public-validation-consumers.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload derived evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-validation-consumer-inventory
+          path: out/
+          if-no-files-found: error
+          retention-days: 14
