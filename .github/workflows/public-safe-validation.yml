@@ -1,0 +1,75 @@
+name: Public-safe validation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-safe-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  powershell-parse:
+    name: PowerShell parse (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Report runner toolchain
+        shell: pwsh
+        run: |
+          $PSVersionTable
+          gh --version
+
+      - name: Parse all PowerShell candidates
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(Get-ChildItem -Path candidates -Filter '*.ps1' -File -Recurse)
+          if ($files.Count -eq 0) {
+            throw 'No PowerShell candidate files were found.'
+          }
+
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            )
+
+            if ($errors.Count -gt 0) {
+              $errors | Format-List *
+              throw "PowerShell parser errors in $($file.FullName)"
+            }
+
+            Write-Host "PASS parser: $($file.FullName)"
+          }
+
+  fork-helper-audit:
+    name: Fork helper read-only audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Run candidate in audit-only mode
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./candidates/Repair-UpstreamForks.ps1 -AuditOnly
