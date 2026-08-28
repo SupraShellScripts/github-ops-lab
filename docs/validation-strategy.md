@@ -13,10 +13,12 @@ The near-term baseline is:
 - PowerShell compatibility: the existing real Windows PowerShell 5.1 / PowerShell 7 validator;
 - GitHub Actions/workflow security: `zizmor`;
 - repository security posture: OpenSSF Scorecard;
-- pull-request dependency risk: GitHub `dependency-review-action`;
+- pull-request dependency risk: GitHub `dependency-review-action`, adopted directly in consumer repositories where GitHub Dependency Graph is enabled;
 - portfolio-specific fork/repository topology: the existing bounded `gh` helper.
 
 `actionlint` remains a candidate only if experiment evidence shows useful findings not already covered by GitHub workflow parsing and zizmor.
+
+The lab does not wrap every upstream validator merely for centralization. The first dependency-review self-test proved that this repository currently has Dependency Graph disabled; GitHub's action correctly fails as unsupported in that state. Rather than weaken failure semantics with `continue-on-error`, dependency review stays a direct consumer capability and is enabled only where its prerequisite is present.
 
 ## Authority boundary
 
@@ -27,11 +29,12 @@ Default validation:
 - uses public inputs only;
 - uses least-privilege `GITHUB_TOKEN` permissions;
 - pins third-party Actions to immutable commit SHAs;
+- pins tool versions where an Action otherwise selects a floating tool release;
 - does not receive credentials that can read private repositories;
 - does not execute arbitrary target project code merely to inspect it;
 - does not convert absence of findings into a proof of safety.
 
-Any cross-repository mutation remains a separately designed, manual, bounded, protected operation.
+Any cross-repository mutation remains a separately designed, manual, bounded, protected operation. When GitHub App tokens are required, both repository selection and requested installation-token permissions are explicitly narrowed.
 
 ## Explicit non-goals for this phase
 
