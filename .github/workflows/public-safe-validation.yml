@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: Check out exact revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
 
       - name: Report runner toolchain
         shell: pwsh
@@ -34,13 +36,14 @@ jobs:
           $PSVersionTable
           gh --version
 
-      - name: Parse all PowerShell candidates
+      - name: Parse public PowerShell tooling
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $files = @(Get-ChildItem -Path candidates -Filter '*.ps1' -File -Recurse)
+          $roots = @('candidates', 'scripts') | Where-Object { Test-Path $_ }
+          $files = @($roots | ForEach-Object { Get-ChildItem -Path $_ -Filter '*.ps1' -File -Recurse })
           if ($files.Count -eq 0) {
-            throw 'No PowerShell candidate files were found.'
+            throw 'No PowerShell files were found.'
           }
 
           foreach ($file in $files) {
@@ -51,12 +54,10 @@ jobs:
               [ref]$tokens,
               [ref]$errors
             )
-
             if ($errors.Count -gt 0) {
               $errors | Format-List *
               throw "PowerShell parser errors in $($file.FullName)"
             }
-
             Write-Host "PASS parser: $($file.FullName)"
           }
 
@@ -66,10 +67,11 @@ jobs:
     steps:
       - name: Check out exact revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
 
-      - name: Run candidate in audit-only mode
+      - name: Run stable entry point in audit-only mode
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          ./candidates/Repair-UpstreamForks.ps1 -AuditOnly
+        run: ./scripts/github/Repair-UpstreamForks.ps1 -AuditOnly
