@@ -40,25 +40,9 @@ permissions:
   contents: read
 
 jobs:
-  scan:
-    name: ${{ matrix.lane }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - lane: winps51-windows
-            os: windows-latest
-            shell: powershell
-          - lane: ps7-windows
-            os: windows-latest
-            shell: pwsh
-          - lane: ps7-linux
-            os: ubuntu-latest
-            shell: pwsh
-          - lane: ps7-macos
-            os: macos-latest
-            shell: pwsh
-    runs-on: ${{ matrix.os }}
+  winps51-windows:
+    name: winps51-windows
+    runs-on: windows-latest
     steps:
       - name: Check out validator
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
@@ -67,44 +51,71 @@ jobs:
           ref: main
           path: validator
           persist-credentials: false
-
       - name: Check out public target
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
         with:
-          repository: ${{ inputs.repository != '' && inputs.repository || github.repository }}
-          ref: ${{ inputs.ref != '' && inputs.ref || github.sha }}
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref || github.sha }}
           path: target
           persist-credentials: false
-
       - name: Scan without executing target scripts
-        shell: ${{ matrix.shell }}
+        shell: powershell
         env:
           TARGET_RELATIVE_PATH: ${{ inputs.path }}
-          LANE: ${{ matrix.lane }}
         run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw "Expected Windows PowerShell 5.1, got $($PSVersionTable.PSVersion)" }
           $targetBase = [IO.Path]::GetFullPath((Join-Path $PWD 'target'))
           $scanRoot = [IO.Path]::GetFullPath((Join-Path $targetBase $env:TARGET_RELATIVE_PATH))
           $prefix = $targetBase.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
-          if (($scanRoot -ne $targetBase) -and -not $scanRoot.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'Requested path escapes the checked-out target repository.'
-          }
-          & ./validator/scripts/powershell/Test-PowerShellCompatibility.ps1 `
-            -Root $scanRoot `
-            -OutputPath (Join-Path $PWD ('evidence/{0}.json' -f $env:LANE)) `
-            -Lane $env:LANE
-
+          if (($scanRoot -ne $targetBase) -and -not $scanRoot.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Requested path escapes the checked-out target repository.' }
+          & ./validator/scripts/powershell/Test-PowerShellCompatibility.ps1 -Root $scanRoot -OutputPath (Join-Path $PWD 'evidence/winps51-windows.json') -Lane winps51-windows
       - name: Upload lane evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ps-compat-${{ matrix.lane }}
-          path: evidence/${{ matrix.lane }}.json
+          name: ps-compat-winps51-windows
+          path: evidence/winps51-windows.json
           if-no-files-found: error
           retention-days: 14
 
-  compare:
-    name: Compare WinPS 5.1 and PS7 evidence
-    needs: scan
-    if: ${{ always() && needs.scan.result == 'success' }}
+  ps7-windows:
+    name: ps7-windows
+    runs-on: windows-latest
+    steps:
+      - name: Check out validator
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: SupraShellScripts/github-ops-lab
+          ref: main
+          path: validator
+          persist-credentials: false
+      - name: Check out public target
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref || github.sha }}
+          path: target
+          persist-credentials: false
+      - name: Scan without executing target scripts
+        shell: pwsh
+        env:
+          TARGET_RELATIVE_PATH: ${{ inputs.path }}
+        run: |
+          if ($PSVersionTable.PSVersion.Major -lt 7) { throw "Expected PowerShell 7+, got $($PSVersionTable.PSVersion)" }
+          $targetBase = [IO.Path]::GetFullPath((Join-Path $PWD 'target'))
+          $scanRoot = [IO.Path]::GetFullPath((Join-Path $targetBase $env:TARGET_RELATIVE_PATH))
+          $prefix = $targetBase.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+          if (($scanRoot -ne $targetBase) -and -not $scanRoot.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Requested path escapes the checked-out target repository.' }
+          & ./validator/scripts/powershell/Test-PowerShellCompatibility.ps1 -Root $scanRoot -OutputPath (Join-Path $PWD 'evidence/ps7-windows.json') -Lane ps7-windows
+      - name: Upload lane evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ps-compat-ps7-windows
+          path: evidence/ps7-windows.json
+          if-no-files-found: error
+          retention-days: 14
+
+  ps7-linux:
+    name: ps7-linux
     runs-on: ubuntu-latest
     steps:
       - name: Check out validator
@@ -114,22 +125,92 @@ jobs:
           ref: main
           path: validator
           persist-credentials: false
+      - name: Check out public target
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref || github.sha }}
+          path: target
+          persist-credentials: false
+      - name: Scan without executing target scripts
+        shell: pwsh
+        env:
+          TARGET_RELATIVE_PATH: ${{ inputs.path }}
+        run: |
+          if ($PSVersionTable.PSVersion.Major -lt 7) { throw "Expected PowerShell 7+, got $($PSVersionTable.PSVersion)" }
+          $targetBase = [IO.Path]::GetFullPath((Join-Path $PWD 'target'))
+          $scanRoot = [IO.Path]::GetFullPath((Join-Path $targetBase $env:TARGET_RELATIVE_PATH))
+          $prefix = $targetBase.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+          if (($scanRoot -ne $targetBase) -and -not $scanRoot.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Requested path escapes the checked-out target repository.' }
+          & ./validator/scripts/powershell/Test-PowerShellCompatibility.ps1 -Root $scanRoot -OutputPath (Join-Path $PWD 'evidence/ps7-linux.json') -Lane ps7-linux
+      - name: Upload lane evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ps-compat-ps7-linux
+          path: evidence/ps7-linux.json
+          if-no-files-found: error
+          retention-days: 14
 
+  ps7-macos:
+    name: ps7-macos
+    runs-on: macos-latest
+    steps:
+      - name: Check out validator
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: SupraShellScripts/github-ops-lab
+          ref: main
+          path: validator
+          persist-credentials: false
+      - name: Check out public target
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref || github.sha }}
+          path: target
+          persist-credentials: false
+      - name: Scan without executing target scripts
+        shell: pwsh
+        env:
+          TARGET_RELATIVE_PATH: ${{ inputs.path }}
+        run: |
+          if ($PSVersionTable.PSVersion.Major -lt 7) { throw "Expected PowerShell 7+, got $($PSVersionTable.PSVersion)" }
+          $targetBase = [IO.Path]::GetFullPath((Join-Path $PWD 'target'))
+          $scanRoot = [IO.Path]::GetFullPath((Join-Path $targetBase $env:TARGET_RELATIVE_PATH))
+          $prefix = $targetBase.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+          if (($scanRoot -ne $targetBase) -and -not $scanRoot.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Requested path escapes the checked-out target repository.' }
+          & ./validator/scripts/powershell/Test-PowerShellCompatibility.ps1 -Root $scanRoot -OutputPath (Join-Path $PWD 'evidence/ps7-macos.json') -Lane ps7-macos
+      - name: Upload lane evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ps-compat-ps7-macos
+          path: evidence/ps7-macos.json
+          if-no-files-found: error
+          retention-days: 14
+
+  compare:
+    name: Compare WinPS 5.1 and PS7 evidence
+    needs: [winps51-windows, ps7-windows, ps7-linux, ps7-macos]
+    if: ${{ always() && needs.winps51-windows.result == 'success' && needs.ps7-windows.result == 'success' && needs.ps7-linux.result == 'success' && needs.ps7-macos.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out validator
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: SupraShellScripts/github-ops-lab
+          ref: main
+          path: validator
+          persist-credentials: false
       - name: Download lane evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: ps-compat-*
           path: lane-evidence
           merge-multiple: true
-
       - name: Compare required Windows engines
         shell: pwsh
         run: |
-          ./validator/scripts/powershell/Compare-PowerShellCompatibility.ps1 `
-            -ResultsRoot ./lane-evidence `
-            -OutputPath ./comparison/powershell-compatibility.json `
-            -RequireWinPS51AndPS7
-
+          ./validator/scripts/powershell/Compare-PowerShellCompatibility.ps1 -ResultsRoot ./lane-evidence -OutputPath ./comparison/powershell-compatibility.json -RequireWinPS51AndPS7
       - name: Upload comparison evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
