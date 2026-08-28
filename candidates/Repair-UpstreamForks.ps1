@@ -276,7 +276,7 @@ $results = foreach ($entry in $forks) {
         ForkIssuesBefore     = [bool]$repo.has_issues
         ParentIssues         = [bool]$upstream.has_issues
         AiContributionStatus = $aiStatus
-        PolicyFilesFound     = ($policyHits.Path -join ', ')
+        PolicyFilesFound     = (@($policyHits | ForEach-Object { $_.Path }) -join ', ')
     }
 }
 
