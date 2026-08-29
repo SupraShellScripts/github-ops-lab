@@ -68,7 +68,7 @@ function Get-GitHubPagesSite {
         return $null
     }
 
-    throw "Unable to read GitHub Pages settings for $Repo:`n$message"
+    throw "Unable to read GitHub Pages settings for ${Repo}:`n$message"
 }
 
 function Invoke-GhMutation {
