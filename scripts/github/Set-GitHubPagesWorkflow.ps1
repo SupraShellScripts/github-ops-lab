@@ -65,6 +65,9 @@ function Get-GitHubPagesSite {
 
     $message = ($raw | Out-String)
     if ($message -match '(?i)HTTP\s+404|Not Found') {
+        # A repository without a configured Pages site is a normal probe result.
+        # Do not allow gh's expected 404 to leak into the script process exit code.
+        $global:LASTEXITCODE = 0
         return $null
     }
 
