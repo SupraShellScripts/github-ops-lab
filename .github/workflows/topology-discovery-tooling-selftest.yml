@@ -29,8 +29,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh extension install mona-actions/gh-stats
-          gh extension install mona-actions/gh-repo-map
+
+          install_extension() {
+            local repo="$1"
+            local attempts=3
+            local delay=5
+            for attempt in $(seq 1 "$attempts"); do
+              if gh extension install "$repo"; then
+                return 0
+              fi
+              if [ "$attempt" -eq "$attempts" ]; then
+                echo "Failed to install $repo after $attempts attempts" >&2
+                return 1
+              fi
+              echo "Transient install failure for $repo; retrying in ${delay}s" >&2
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
+
+          install_extension mona-actions/gh-stats
+          install_extension mona-actions/gh-repo-map
 
       - name: Parse probe script
         shell: pwsh
