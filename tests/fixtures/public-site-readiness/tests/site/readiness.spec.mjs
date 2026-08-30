@@ -73,7 +73,11 @@ test('320px reflow remains usable', async ({ page }) => {
   for (const route of routes) {
     await page.goto(route, { waitUntil: 'networkidle' });
     await assertNoHorizontalOverflow(page, `320px ${route}`);
-    for (const locator of [page.getByRole('link', { name: 'Home' }), page.getByRole('link', { name: 'Accessibility' }), page.locator('#theme-select')]) {
+    for (const locator of [
+      page.getByRole('link', { name: 'Home', exact: true }),
+      page.getByRole('link', { name: 'Accessibility', exact: true }),
+      page.locator('#theme-select')
+    ]) {
       await expect(locator).toBeVisible();
     }
   }
