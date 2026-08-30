@@ -9,6 +9,7 @@ on:
       - 'experiments/fritzbox/dns_convergence_scan.py'
       - 'experiments/fritzbox/dns_boundary_scan.py'
       - 'experiments/fritzbox/dns_uimod_bridge_scan.py'
+      - 'experiments/fritzbox/dns_resource_mapping_scan.py'
   workflow_dispatch:
 
 permissions:
@@ -152,6 +153,19 @@ jobs:
           cat "$work/report/uimod-bridge/uimod-bridge-functions.tsv"
           echo '--- candidate bridge edges ---'
           cat "$work/report/uimod-bridge/uimod-bridge-edges.tsv"
+
+      - name: Trace generic DNS resource mapping only
+        shell: bash
+        run: |
+          set -euo pipefail
+          work='${{ steps.firmware.outputs.work }}'
+          root="$(cat "$work/root-path.txt")"
+          python experiments/fritzbox/dns_resource_mapping_scan.py "$root" --output "$work/report/resource-map"
+          cat "$work/report/resource-map/dns-resource-map-summary.md"
+          echo '--- exact DNS resource mapping contexts ---'
+          grep -E 'generic/dnsserver|dns_over_tls|dnscfg|firstdns|seconddns|api_generic|webvar|uimod' "$work/report/resource-map/dns-resource-map-json-context.tsv" | head -n 240 || true
+          echo '--- DNS data-adapter contexts ---'
+          cat "$work/report/resource-map/dns-resource-map-data-context.tsv"
 
       - name: Delete proprietary payloads and verify report boundary
         shell: bash
