@@ -8,6 +8,7 @@ on:
       - 'experiments/fritzbox/dns_state_machine_scan.py'
       - 'experiments/fritzbox/dns_convergence_scan.py'
       - 'experiments/fritzbox/dns_boundary_scan.py'
+      - 'experiments/fritzbox/dns_uimod_bridge_scan.py'
   workflow_dispatch:
 
 permissions:
@@ -138,6 +139,19 @@ jobs:
           head -n 240 "$work/report/boundary/boundary-elf-symbols.tsv"
           echo '--- anchor offsets ---'
           cat "$work/report/boundary/boundary-anchor-offsets.tsv"
+
+      - name: Trace REST generic API to Uimod bridge only
+        shell: bash
+        run: |
+          set -euo pipefail
+          work='${{ steps.firmware.outputs.work }}'
+          root="$(cat "$work/root-path.txt")"
+          python experiments/fritzbox/dns_uimod_bridge_scan.py "$root" --output "$work/report/uimod-bridge"
+          cat "$work/report/uimod-bridge/uimod-bridge-summary.md"
+          echo '--- relevant functions ---'
+          cat "$work/report/uimod-bridge/uimod-bridge-functions.tsv"
+          echo '--- candidate bridge edges ---'
+          cat "$work/report/uimod-bridge/uimod-bridge-edges.tsv"
 
       - name: Delete proprietary payloads and verify report boundary
         shell: bash
