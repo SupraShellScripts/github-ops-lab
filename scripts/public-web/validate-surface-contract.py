@@ -355,6 +355,63 @@ def parse_robots(path: Path) -> tuple[list[str], list[tuple[str, str, str]]]:
     return sitemaps, directives
 
 
+def validate_robots(
+    discovery: dict[str, Any],
+    production_base: str,
+    site_dir: Path,
+    sitemap_url: str,
+    errors: list[str],
+) -> dict[str, str]:
+    raw = discovery.get("robots")
+    if raw is None:
+        raise ValidationError("discovery.robots must explicitly declare local or origin-external authority")
+
+    if isinstance(raw, str):
+        config: dict[str, Any] = {"mode": "local", "path": raw}
+    elif isinstance(raw, dict):
+        config = raw
+    else:
+        raise ValidationError("discovery.robots must be a path string or object")
+
+    mode = config.get("mode")
+    prod = urlparse(production_base)
+    origin_robots = urlunparse((prod.scheme, prod.netloc, "/robots.txt", "", "", ""))
+
+    if mode == "local":
+        if prod.path not in {"", "/"}:
+            add_error(
+                errors,
+                "local robots.txt is invalid for a subpath-hosted production surface; declare origin-external authority instead",
+            )
+        path = config.get("path", "robots.txt")
+        if not isinstance(path, str) or not path or urlparse(path).scheme:
+            raise ValidationError("local robots path must be a relative candidate path")
+        sitemaps, directives = parse_robots(site_dir / path)
+        if sitemap_url not in sitemaps:
+            add_error(errors, f"robots.txt must advertise canonical sitemap URL {sitemap_url}")
+        for agent, kind, value in directives:
+            if agent == "*" and kind == "disallow" and value == "/":
+                add_error(errors, "robots.txt blocks the entire production origin for User-agent *")
+        return {"mode": "local", "url": origin_robots, "verification": "candidate"}
+
+    if mode == "origin-external":
+        value = config.get("url")
+        if not isinstance(value, str) or not value:
+            raise ValidationError("origin-external robots authority requires an absolute url")
+        parsed = urlparse(value)
+        if (
+            parsed.scheme != prod.scheme
+            or parsed.netloc != prod.netloc
+            or parsed.path != "/robots.txt"
+            or parsed.query
+            or parsed.fragment
+        ):
+            add_error(errors, f"origin-external robots URL must be the production origin root {origin_robots}")
+        return {"mode": "origin-external", "url": value, "verification": "deferred-live"}
+
+    raise ValidationError("discovery.robots mode must be 'local' or 'origin-external'")
+
+
 def same_origin_and_base(url: str, base: str) -> tuple[bool, bool]:
     u, b = urlparse(url), urlparse(base)
     same_origin = (u.scheme, u.netloc) == (b.scheme, b.netloc)
@@ -408,7 +465,8 @@ def validate(contract_path: Path, site_dir: Path, navigation_base_url: str | Non
     if not isinstance(discovery, dict):
         raise ValidationError("discovery must be an object")
     sitemap_rel = discovery.get("sitemap", "sitemap.xml")
-    robots_rel = discovery.get("robots", "robots.txt")
+    if not isinstance(sitemap_rel, str) or not sitemap_rel:
+        raise ValidationError("discovery.sitemap must be a relative candidate path")
     machine_rel = discovery.get("machine_description")
 
     expected_sitemap = {
@@ -427,13 +485,7 @@ def validate(contract_path: Path, site_dir: Path, navigation_base_url: str | Non
             add_error(errors, f"sitemap lastmod mismatch for {loc}: expected {expected_sitemap[loc]!r}, got {actual_sitemap[loc]!r}")
 
     sitemap_url = urljoin(production_base, sitemap_rel)
-    robot_sitemaps, robot_directives = parse_robots(site_dir / robots_rel)
-    if sitemap_url not in robot_sitemaps:
-        add_error(errors, f"robots.txt must advertise canonical sitemap URL {sitemap_url}")
-    production_path = urlparse(production_base).path
-    for agent, kind, value in robot_directives:
-        if agent == "*" and kind == "disallow" and value in {"/", production_path, production_path.rstrip("/")}:
-            add_error(errors, f"robots.txt blocks production site for User-agent *: Disallow: {value}")
+    robots_evidence = validate_robots(discovery, production_base, site_dir, sitemap_url, errors)
 
     if machine_rel and not urlparse(machine_rel).scheme:
         machine_path = site_dir / machine_rel.lstrip("/")
@@ -476,11 +528,7 @@ def validate(contract_path: Path, site_dir: Path, navigation_base_url: str | Non
 
         if machine_rel:
             parsed_machine = urlparse(machine_rel)
-            expected_machine = (
-                machine_rel
-                if parsed_machine.scheme
-                else urljoin(navigation_base, machine_rel.lstrip("/"))
-            )
+            expected_machine = machine_rel if parsed_machine.scheme else urljoin(navigation_base, machine_rel.lstrip("/"))
             resolved = {urljoin(candidate_page, href) for href in page.describedby}
             if expected_machine not in resolved:
                 add_error(errors, f"{route.id}: missing rel=describedby link to candidate machine description {expected_machine}")
@@ -608,6 +656,7 @@ def validate(contract_path: Path, site_dir: Path, navigation_base_url: str | Non
         "contract_schema": CONTRACT_SCHEMA,
         "production_base_url": production_base,
         "navigation_base_url": navigation_base,
+        "robots": robots_evidence,
         "route_count": len(routes),
         "expected_transition_count": len(transitions),
         "observed_edge_count": len(observed_edges),
