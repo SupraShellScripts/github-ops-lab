@@ -142,7 +142,7 @@ Sitemap: https://example.org/project/sitemap.xml
         )
         evidence = self.validate()
         self.assertEqual("fail", evidence["verdict"])
-        self.assertTrue(any("escapes project base path" in e for e in evidence["errors"]))
+        self.assertTrue(any("escapes candidate project base path" in e for e in evidence["errors"]))
 
     def test_missing_sitemap_route_fails(self) -> None:
         path = self.site / "sitemap.xml"
@@ -193,6 +193,38 @@ Sitemap: https://example.org/project/sitemap.xml
         evidence = self.validate()
         self.assertEqual("fail", evidence["verdict"])
         self.assertTrue(any("lastmod mismatch" in e for e in evidence["errors"]))
+
+    def test_candidate_navigation_base_is_distinct_from_canonical_base(self) -> None:
+        index = self.site / "index.html"
+        use = self.site / "use" / "index.html"
+        index.write_text(
+            index.read_text(encoding="utf-8")
+            .replace('href="use/"', 'href="http://127.0.0.1:4173/use/"')
+            .replace('href="./"', 'href="http://127.0.0.1:4173/"'),
+            encoding="utf-8",
+        )
+        use.write_text(
+            use.read_text(encoding="utf-8")
+            .replace('href="../"', 'href="http://127.0.0.1:4173/"'),
+            encoding="utf-8",
+        )
+        evidence = module.validate(
+            self.contract_path, self.site, "http://127.0.0.1:4173/"
+        )
+        self.assertEqual("pass", evidence["verdict"])
+        self.assertEqual("https://example.org/project/", evidence["production_base_url"])
+        self.assertEqual("http://127.0.0.1:4173/", evidence["navigation_base_url"])
+
+    def test_rendered_dead_end_fails(self) -> None:
+        path = self.site / "use" / "index.html"
+        text = path.read_text(encoding="utf-8")
+        text = text.replace(
+            '<a data-surface-action="nav-home" href="../">Home</a>', ""
+        )
+        path.write_text(text, encoding="utf-8")
+        evidence = self.validate()
+        self.assertEqual("fail", evidence["verdict"])
+        self.assertTrue(any("rendered dead end" in e for e in evidence["errors"]))
 
 
 if __name__ == "__main__":
