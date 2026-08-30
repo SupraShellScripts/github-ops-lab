@@ -112,6 +112,30 @@ https://example.org/project/guide/
 
 This avoids treating GitHub Pages project sites as origin-root sites.
 
+### Production identity versus candidate navigation identity
+
+`production_base_url` is the canonical/indexing identity. It is **not** assumed to be the URL used by the local candidate server.
+
+For example, Bridge can be generated with canonical URLs under:
+
+```text
+https://supracraft.github.io/Bridge/
+```
+
+while browser qualification serves the exact candidate at:
+
+```text
+http://127.0.0.1:4173/
+```
+
+Pass that ephemeral candidate identity with:
+
+```text
+--navigation-base http://127.0.0.1:4173/
+```
+
+The validator uses the production base for canonical/Sitemap/robots checks and the navigation base for rendered internal-link containment and route resolution. This separation prevents a correct candidate from being rejected merely because it is being tested before publication.
+
 ### Rendered state/action identifiers
 
 The rendered page declares its route/state identity:
@@ -140,6 +164,25 @@ A rendered action must resolve to exactly one class:
 - `exceptions` — narrow documented exceptions with a reason.
 
 A link/action that is rendered but unclassified fails validation.
+
+By default, each declared `navigation` action is required on every required route. A project can narrow that requirement:
+
+```json
+{
+  "action": "nav-releases",
+  "class": "global",
+  "to": "releases",
+  "required_on": ["home", "guide", "releases"]
+}
+```
+
+or mark the navigation declaration as classification-only:
+
+```json
+"required_on": false
+```
+
+Required non-terminal routes must also render at least one valid internal transition/navigation action, so a declared recovery concept cannot hide a real rendered dead end.
 
 ### Browser-required actions
 
@@ -223,7 +266,7 @@ or a prefix:
 
 When `handoff` is declared, rendered HTML must also expose the matching `data-surface-handoff` value.
 
-The validator rejects a declared internal action that exits the site and a declared external handoff that unexpectedly stays on the same origin.
+The validator rejects a declared internal action that exits the candidate site and a declared external handoff that unexpectedly stays on the candidate origin.
 
 ## Usage
 
@@ -231,6 +274,7 @@ The validator rejects a declared internal action that exits the site and a decla
 python3 scripts/public-web/validate-surface-contract.py \
   --contract ./PUBLIC_SURFACE.json \
   --site-dir ./build/public-site \
+  --navigation-base http://127.0.0.1:4173/ \
   --evidence ./build/public-surface-conformance.json
 ```
 
@@ -249,7 +293,7 @@ public-surface-conformance-evidence/1
 It records:
 
 - contract schema;
-- production base URL;
+- production canonical base URL and candidate navigation base URL;
 - route and expected-transition counts;
 - observed classified edges;
 - browser-required actions;
