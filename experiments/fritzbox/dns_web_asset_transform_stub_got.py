@@ -14,12 +14,14 @@ import importlib.util
 import json
 import pathlib
 import re
+import sys
 
 BASE_PATH = pathlib.Path(__file__).with_name("dns_web_asset_transform_xrefs.py")
 spec = importlib.util.spec_from_file_location("fritz_xrefs_base", BASE_PATH)
 if spec is None or spec.loader is None:
     raise RuntimeError(f"cannot load {BASE_PATH}")
 base = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = base
 spec.loader.exec_module(base)
 
 HEX_RE = re.compile(r"(?<![0-9A-Fa-f])([0-9A-Fa-f]{6,8})(?![0-9A-Fa-f])")
