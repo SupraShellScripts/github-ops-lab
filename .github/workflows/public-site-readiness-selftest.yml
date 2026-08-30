@@ -1,0 +1,50 @@
+name: Public site readiness self-test
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/public-site-readiness.yml'
+      - '.github/workflows/public-site-readiness-selftest.yml'
+      - 'tests/fixtures/public-site-readiness/**'
+      - 'docs/public-site-release-readiness.md'
+      - 'README.md'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/public-site-readiness.yml'
+      - '.github/workflows/public-site-readiness-selftest.yml'
+      - 'tests/fixtures/public-site-readiness/**'
+      - 'docs/public-site-release-readiness.md'
+      - 'README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-site-readiness-selftest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    uses: ./.github/workflows/public-site-readiness.yml
+    with:
+      working_directory: tests/fixtures/public-site-readiness
+      build_command: npm run site:build
+      validate_command: npm run site:validate
+      lychee_args: >-
+        --verbose
+        --no-progress
+        --max-retries 2
+        --timeout 20
+        --accept 200,204,206,429
+        --exclude '^http://127\.0\.0\.1(:[0-9]+)?/'
+        './tests/fixtures/public-site-readiness/build/public-site/**/*.html'
+      evidence_paths: |
+        tests/fixtures/public-site-readiness/build/playwright-report
+        tests/fixtures/public-site-readiness/build/playwright-results
+        tests/fixtures/public-site-readiness/build/lighthouse
+        lychee/out.md
+      artifact_name: public-site-readiness-selftest
+      retention_days: 14
