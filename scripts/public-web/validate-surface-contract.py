@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-"""
-Validate a generated static public surface against a project-owned machine contract.
-
-This validator is intentionally dependency-free and read-only. It covers cheap,
-deterministic checks that do not require browser execution:
-- contract/model structural validity and required-state reachability;
-- rendered link/action classification against the expected graph;
-- project-base-path containment;
-- canonical/title/noindex consistency;
-- sitemap/robots/discovery consistency.
-
-Browser execution of JS-only transitions remains a consumer-owned Playwright concern.
-"""
+"""Read-only deterministic public-surface model/discovery conformance validator."""
 from __future__ import annotations
 
 import argparse
@@ -19,16 +7,16 @@ import json
 import posixpath
 import re
 import sys
+import xml.etree.ElementTree as ET
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
-import xml.etree.ElementTree as ET
 
-
-SCHEMA = "public-surface-contract/1"
+CONTRACT_SCHEMA = "public-surface-contract/1"
+EVIDENCE_SCHEMA = "public-surface-conformance-evidence/1"
 
 
 class ValidationError(Exception):
@@ -46,45 +34,40 @@ class Route:
     lastmod: str | None
 
 
-class SurfaceHTMLParser(HTMLParser):
+class PageParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.title_parts: list[str] = []
         self._in_title = False
+        self._title: list[str] = []
         self.states: list[str] = []
         self.canonicals: list[str] = []
         self.describedby: list[str] = []
-        self.meta_robots: list[str] = []
+        self.robots: list[str] = []
         self.actions: list[dict[str, str | None]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
         a = {k.lower(): v for k, v in attrs}
-        if tag.lower() == "title":
+        if tag == "title":
             self._in_title = True
-        state = a.get("data-surface-state")
-        if state:
-            self.states.append(state)
-        if tag.lower() == "link":
+        if a.get("data-surface-state"):
+            self.states.append(a["data-surface-state"] or "")
+        if tag == "link":
             rel = set((a.get("rel") or "").lower().split())
-            href = a.get("href")
-            if href and "canonical" in rel:
-                self.canonicals.append(href)
-            if href and "describedby" in rel:
-                self.describedby.append(href)
-        if tag.lower() == "meta" and (a.get("name") or "").lower() in {"robots", "googlebot"}:
+            if a.get("href") and "canonical" in rel:
+                self.canonicals.append(a["href"] or "")
+            if a.get("href") and "describedby" in rel:
+                self.describedby.append(a["href"] or "")
+        if tag == "meta" and (a.get("name") or "").lower() in {"robots", "googlebot"}:
             if a.get("content"):
-                self.meta_robots.append(a["content"] or "")
-        if tag.lower() in {"a", "button"}:
-            action = a.get("data-surface-action")
-            href = a.get("href") if tag.lower() == "a" else None
-            self.actions.append(
-                {
-                    "tag": tag.lower(),
-                    "action": action,
-                    "href": href,
-                    "handoff": a.get("data-surface-handoff"),
-                }
-            )
+                self.robots.append(a["content"] or "")
+        if tag in {"a", "button"}:
+            self.actions.append({
+                "tag": tag,
+                "action": a.get("data-surface-action"),
+                "href": a.get("href") if tag == "a" else None,
+                "handoff": a.get("data-surface-handoff"),
+            })
 
     def handle_endtag(self, tag: str) -> None:
         if tag.lower() == "title":
@@ -92,83 +75,75 @@ class SurfaceHTMLParser(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         if self._in_title:
-            self.title_parts.append(data)
+            self._title.append(data)
 
     @property
     def title(self) -> str:
-        return " ".join("".join(self.title_parts).split())
+        return " ".join("".join(self._title).split())
 
 
-def fail(errors: list[str], message: str) -> None:
+def error(errors: list[str], message: str) -> None:
     errors.append(message)
 
 
-def normalize_route_path(value: str) -> str:
-    if not isinstance(value, str) or not value.startswith("/"):
-        raise ValidationError(f"route path must start with '/': {value!r}")
-    parsed = urlparse(value)
-    if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
-        raise ValidationError(f"route path must be a path only: {value!r}")
-    raw = re.sub(r"/+", "/", parsed.path)
-    norm = posixpath.normpath(raw)
-    if not norm.startswith("/"):
-        norm = "/" + norm
-    if raw.endswith("/") and norm != "/":
-        norm += "/"
-    if ".." in Path(norm).parts:
-        raise ValidationError(f"route path may not contain '..': {value!r}")
-    return norm
-
-
-def normalize_base_url(value: str) -> str:
+def norm_base(value: str, field: str) -> str:
     p = urlparse(value)
-    if p.scheme not in {"http", "https"} or not p.netloc:
-        raise ValidationError("production_base_url must be an absolute http(s) URL")
-    if p.query or p.fragment:
-        raise ValidationError("production_base_url may not contain query/fragment")
+    if p.scheme not in {"http", "https"} or not p.netloc or p.query or p.fragment:
+        raise ValidationError(f"{field} must be an absolute http(s) URL without query/fragment")
     path = p.path or "/"
     if not path.endswith("/"):
         path += "/"
     return urlunparse((p.scheme, p.netloc, path, "", "", ""))
 
 
-def route_url(base_url: str, route_path: str) -> str:
-    rel = route_path.lstrip("/")
-    return urljoin(base_url, rel)
+def norm_route(value: Any) -> str:
+    if not isinstance(value, str) or not value.startswith("/"):
+        raise ValidationError(f"route path must start with '/': {value!r}")
+    p = urlparse(value)
+    if p.scheme or p.netloc or p.query or p.fragment:
+        raise ValidationError(f"route path must be path-only: {value!r}")
+    raw = re.sub(r"/+", "/", p.path)
+    norm = posixpath.normpath(raw)
+    if not norm.startswith("/"):
+        norm = "/" + norm
+    if raw.endswith("/") and norm != "/":
+        norm += "/"
+    return norm
 
 
-def local_file_for_route(site_dir: Path, route_path: str) -> Path:
-    rel = route_path.lstrip("/")
+def project_url(base: str, route_path: str) -> str:
+    return urljoin(base, route_path.lstrip("/"))
+
+
+def route_file(site_dir: Path, path: str) -> Path:
+    rel = path.lstrip("/")
     if not rel:
         return site_dir / "index.html"
-    if route_path.endswith("/"):
+    if path.endswith("/"):
         return site_dir / rel / "index.html"
-    suffix = Path(rel).suffix.lower()
-    if suffix in {".html", ".htm"}:
+    if Path(rel).suffix.lower() in {".html", ".htm"}:
         return site_dir / rel
     return site_dir / rel / "index.html"
 
 
-def parse_html(path: Path) -> SurfaceHTMLParser:
-    parser = SurfaceHTMLParser()
+def read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValidationError(f"cannot read JSON {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValidationError(f"{path} must contain a JSON object")
+    return value
+
+
+def parse_page(path: Path) -> PageParser:
+    parser = PageParser()
     parser.feed(path.read_text(encoding="utf-8"))
     parser.close()
     return parser
 
 
-def load_contract(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValidationError(f"cannot read contract {path}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise ValidationError("contract root must be an object")
-    if value.get("schema") != SCHEMA:
-        raise ValidationError(f"contract schema must be {SCHEMA!r}")
-    return value
-
-
-def build_routes(contract: dict[str, Any]) -> tuple[list[Route], dict[str, Route], dict[str, Route]]:
+def load_routes(contract: dict[str, Any]) -> tuple[list[Route], dict[str, Route], dict[str, Route]]:
     raw_routes = contract.get("routes")
     if not isinstance(raw_routes, list) or not raw_routes:
         raise ValidationError("routes must be a non-empty array")
@@ -177,114 +152,114 @@ def build_routes(contract: dict[str, Any]) -> tuple[list[Route], dict[str, Route
     by_path: dict[str, Route] = {}
     for raw in raw_routes:
         if not isinstance(raw, dict):
-            raise ValidationError("each route must be an object")
-        rid = raw.get("id")
-        title = raw.get("title")
+            raise ValidationError("route entries must be objects")
+        rid, title = raw.get("id"), raw.get("title")
         if not isinstance(rid, str) or not rid:
-            raise ValidationError("each route requires non-empty string id")
+            raise ValidationError("route id must be a non-empty string")
         if not isinstance(title, str) or not title.strip():
-            raise ValidationError(f"route {rid!r} requires a non-empty expected title")
-        path = normalize_route_path(raw.get("path"))
-        if rid in by_id:
-            raise ValidationError(f"duplicate route id: {rid}")
-        if path in by_path:
-            raise ValidationError(f"duplicate route path: {path}")
+            raise ValidationError(f"route {rid!r} requires an exact expected title")
+        path = norm_route(raw.get("path"))
+        if rid in by_id or path in by_path:
+            raise ValidationError(f"duplicate route id/path: {rid!r} {path!r}")
+        lastmod = raw.get("lastmod")
+        if lastmod is not None and not isinstance(lastmod, str):
+            raise ValidationError(f"route {rid!r} lastmod must be a string")
         route = Route(
-            id=rid,
-            path=path,
-            title=title.strip(),
-            indexable=bool(raw.get("indexable", True)),
-            required=bool(raw.get("required", True)),
-            terminal=bool(raw.get("terminal", False)),
-            lastmod=raw.get("lastmod"),
+            rid, path, title.strip(),
+            bool(raw.get("indexable", True)),
+            bool(raw.get("required", True)),
+            bool(raw.get("terminal", False)),
+            lastmod,
         )
-        if route.lastmod is not None and not isinstance(route.lastmod, str):
-            raise ValidationError(f"route {rid!r} lastmod must be a string when present")
         routes.append(route)
         by_id[rid] = route
         by_path[path] = route
     return routes, by_id, by_path
 
 
-def load_actions(contract: dict[str, Any], route_by_id: dict[str, Route]) -> tuple[dict[tuple[str, str], dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    edges: dict[tuple[str, str], dict[str, Any]] = {}
-    nav: dict[str, dict[str, Any]] = {}
+def load_action_contract(
+    contract: dict[str, Any], by_id: dict[str, Route]
+) -> tuple[
+    dict[tuple[str, str], dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+]:
+    transitions: dict[tuple[str, str], dict[str, Any]] = {}
+    navigation: dict[str, dict[str, Any]] = {}
     handoffs: dict[str, dict[str, Any]] = {}
     exceptions: dict[str, dict[str, Any]] = {}
 
-    for edge in contract.get("transitions", []):
-        if not isinstance(edge, dict):
-            raise ValidationError("transition must be object")
-        src, action, target = edge.get("from"), edge.get("action"), edge.get("to")
-        if src not in route_by_id or target not in route_by_id or not isinstance(action, str) or not action:
-            raise ValidationError(f"invalid transition: {edge!r}")
+    for item in contract.get("transitions", []):
+        if not isinstance(item, dict):
+            raise ValidationError("transition entries must be objects")
+        src, action, target = item.get("from"), item.get("action"), item.get("to")
+        if src not in by_id or target not in by_id or not isinstance(action, str) or not action:
+            raise ValidationError(f"invalid transition: {item!r}")
         key = (src, action)
-        if key in edges:
-            raise ValidationError(f"duplicate transition action {action!r} from {src!r}")
-        edges[key] = edge
+        if key in transitions:
+            raise ValidationError(f"duplicate transition: {key!r}")
+        transitions[key] = item
 
     for item in contract.get("navigation", []):
         if not isinstance(item, dict):
-            raise ValidationError("navigation item must be object")
+            raise ValidationError("navigation entries must be objects")
         action, target, cls = item.get("action"), item.get("to"), item.get("class")
-        if not isinstance(action, str) or not action or target not in route_by_id or cls not in {"global", "utility"}:
-            raise ValidationError(f"invalid navigation item: {item!r}")
-        if action in nav:
-            raise ValidationError(f"duplicate navigation action: {action}")
-        nav[action] = item
+        if not isinstance(action, str) or not action or target not in by_id or cls not in {"global", "utility"}:
+            raise ValidationError(f"invalid navigation: {item!r}")
+        if action in navigation:
+            raise ValidationError(f"duplicate navigation action {action!r}")
+        navigation[action] = item
 
     for item in contract.get("handoffs", []):
         if not isinstance(item, dict):
-            raise ValidationError("handoff must be object")
+            raise ValidationError("handoff entries must be objects")
         action = item.get("action")
         if not isinstance(action, str) or not action:
             raise ValidationError(f"invalid handoff action: {item!r}")
         if not any(isinstance(item.get(k), str) and item.get(k) for k in ("url", "url_prefix")):
             raise ValidationError(f"handoff {action!r} requires url or url_prefix")
         if action in handoffs:
-            raise ValidationError(f"duplicate handoff action: {action}")
+            raise ValidationError(f"duplicate handoff action {action!r}")
         handoffs[action] = item
 
     for item in contract.get("exceptions", []):
         if not isinstance(item, dict):
-            raise ValidationError("exception must be object")
-        action = item.get("action")
-        if not isinstance(action, str) or not action or not isinstance(item.get("reason"), str):
+            raise ValidationError("exception entries must be objects")
+        action, reason = item.get("action"), item.get("reason")
+        if not isinstance(action, str) or not action or not isinstance(reason, str) or not reason:
             raise ValidationError(f"invalid exception: {item!r}")
         if action in exceptions:
-            raise ValidationError(f"duplicate exception action: {action}")
+            raise ValidationError(f"duplicate exception action {action!r}")
         exceptions[action] = item
 
-    namespaces = defaultdict(list)
-    for label, mapping in [("navigation", nav), ("handoff", handoffs), ("exception", exceptions)]:
+    seen: dict[str, str] = {}
+    for kind, mapping in [("navigation", navigation), ("handoff", handoffs), ("exception", exceptions)]:
         for action in mapping:
-            namespaces[action].append(label)
-    for action, kinds in namespaces.items():
-        if len(kinds) > 1:
-            raise ValidationError(f"action {action!r} is ambiguously declared in {kinds}")
-    return edges, nav, handoffs, exceptions
+            if action in seen:
+                raise ValidationError(f"action {action!r} appears in both {seen[action]} and {kind}")
+            seen[action] = kind
+    return transitions, navigation, handoffs, exceptions
 
 
-def check_reachability(
+def check_model(
     contract: dict[str, Any],
     routes: list[Route],
-    route_by_id: dict[str, Route],
-    edges: dict[tuple[str, str], dict[str, Any]],
-    nav: dict[str, dict[str, Any]],
+    by_id: dict[str, Route],
+    transitions: dict[tuple[str, str], dict[str, Any]],
+    navigation: dict[str, dict[str, Any]],
     errors: list[str],
 ) -> None:
     entries = contract.get("entry_states")
-    if not isinstance(entries, list) or not entries or any(e not in route_by_id for e in entries):
-        fail(errors, "entry_states must be a non-empty array of declared route ids")
+    if not isinstance(entries, list) or not entries or any(e not in by_id for e in entries):
+        error(errors, "entry_states must be a non-empty list of declared route ids")
         return
-
     graph: dict[str, set[str]] = defaultdict(set)
-    for (src, _), edge in edges.items():
-        graph[src].add(edge["to"])
-    for src in route_by_id:
-        for item in nav.values():
+    for (src, _), item in transitions.items():
+        graph[src].add(item["to"])
+    for src in by_id:
+        for item in navigation.values():
             graph[src].add(item["to"])
-
     seen: set[str] = set()
     queue = deque(entries)
     while queue:
@@ -295,14 +270,7 @@ def check_reachability(
         queue.extend(sorted(graph[current] - seen))
     for route in routes:
         if route.required and route.id not in seen:
-            fail(errors, f"required route/state {route.id!r} is unreachable from entry_states")
-
-    outgoing = defaultdict(int)
-    for (src, _), edge in edges.items():
-        outgoing[src] += 1
-    for route in routes:
-        if route.required and not route.terminal and outgoing[route.id] == 0 and not nav:
-            fail(errors, f"required non-terminal route/state {route.id!r} has no declared continuation/recovery path")
+            error(errors, f"required route/state {route.id!r} is unreachable from entry_states")
 
 
 def parse_sitemap(path: Path) -> dict[str, str | None]:
@@ -313,266 +281,291 @@ def parse_sitemap(path: Path) -> dict[str, str | None]:
     except (OSError, ET.ParseError) as exc:
         raise ValidationError(f"invalid sitemap {path}: {exc}") from exc
     result: dict[str, str | None] = {}
-    for url in root.findall(".//{*}url"):
-        loc_el = url.find("{*}loc")
-        lastmod_el = url.find("{*}lastmod")
-        if loc_el is None or not (loc_el.text or "").strip():
-            raise ValidationError("sitemap url entry missing loc")
-        loc = (loc_el.text or "").strip()
+    for node in root.findall(".//{*}url"):
+        loc_node, last_node = node.find("{*}loc"), node.find("{*}lastmod")
+        loc = (loc_node.text or "").strip() if loc_node is not None else ""
+        if not loc:
+            raise ValidationError("sitemap URL entry is missing loc")
         if loc in result:
-            raise ValidationError(f"duplicate sitemap URL: {loc}")
-        result[loc] = (lastmod_el.text or "").strip() if lastmod_el is not None and (lastmod_el.text or "").strip() else None
+            raise ValidationError(f"duplicate sitemap URL {loc!r}")
+        result[loc] = (last_node.text or "").strip() if last_node is not None and (last_node.text or "").strip() else None
     return result
 
 
-def parse_robots(path: Path) -> tuple[list[str], list[tuple[str, str]]]:
+def parse_robots(path: Path) -> tuple[list[str], list[tuple[str, str, str]]]:
     if not path.exists():
         raise ValidationError(f"missing robots.txt: {path}")
     sitemaps: list[str] = []
-    directives: list[tuple[str, str]] = []
-    current_agents: list[str] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.split("#", 1)[0].strip()
+    directives: list[tuple[str, str, str]] = []
+    agents: list[str] = []
+    previous_was_agent = False
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
         if not line or ":" not in line:
+            previous_was_agent = False if not line else previous_was_agent
             continue
-        key, value = [x.strip() for x in line.split(":", 1)]
-        key_l = key.lower()
-        if key_l == "user-agent":
-            current_agents = [value.lower()]
-        elif key_l == "sitemap":
+        key, value = [v.strip() for v in line.split(":", 1)]
+        key = key.lower()
+        if key == "user-agent":
+            if not previous_was_agent:
+                agents = []
+            agents.append(value.lower())
+            previous_was_agent = True
+        elif key == "sitemap":
             sitemaps.append(value)
-        elif key_l in {"allow", "disallow"}:
-            for agent in current_agents or ["*"]:
-                directives.append((agent, f"{key_l}:{value}"))
+            previous_was_agent = False
+        elif key in {"allow", "disallow"}:
+            for agent in agents or ["*"]:
+                directives.append((agent, key, value))
+            previous_was_agent = False
+        else:
+            previous_was_agent = False
     return sitemaps, directives
 
 
-def is_same_site(url: str, base_url: str) -> tuple[bool, bool]:
-    u, b = urlparse(url), urlparse(base_url)
+def same_origin_and_base(url: str, base: str) -> tuple[bool, bool]:
+    u, b = urlparse(url), urlparse(base)
     same_origin = (u.scheme, u.netloc) == (b.scheme, b.netloc)
     base_path = b.path if b.path.endswith("/") else b.path + "/"
-    in_base = same_origin and (u.path == base_path[:-1] or u.path.startswith(base_path))
-    return same_origin, in_base
+    return same_origin, same_origin and (u.path == base_path[:-1] or u.path.startswith(base_path))
 
 
-def route_id_for_absolute(url: str, base_url: str, route_by_path: dict[str, Route]) -> str | None:
-    p = urlparse(url)
-    b = urlparse(base_url)
+def target_route(url: str, navigation_base: str, by_path: dict[str, Route]) -> str | None:
+    u, b = urlparse(url), urlparse(navigation_base)
     base_path = b.path if b.path.endswith("/") else b.path + "/"
-    if not p.path.startswith(base_path):
+    if not (u.path == base_path[:-1] or u.path.startswith(base_path)):
         return None
-    rel = p.path[len(base_path):]
-    project_path = "/" + rel
-    if project_path == "/":
-        project_path = "/"
-    elif p.path.endswith("/") and not project_path.endswith("/"):
-        project_path += "/"
-    try:
-        project_path = normalize_route_path(project_path)
-    except ValidationError:
-        return None
-    route = route_by_path.get(project_path)
+    rel = "" if u.path == base_path[:-1] else u.path[len(base_path):]
+    path = norm_route("/" + rel)
+    route = by_path.get(path)
     return route.id if route else None
 
 
-def validate(contract_path: Path, site_dir: Path) -> dict[str, Any]:
+def required_sources(item: dict[str, Any], routes: list[Route]) -> set[str]:
+    raw = item.get("required_on")
+    if raw is None:
+        return {route.id for route in routes if route.required}
+    if raw is False:
+        return set()
+    if not isinstance(raw, list) or any(not isinstance(v, str) for v in raw):
+        raise ValidationError("navigation required_on must be false or a list of route ids")
+    return set(raw)
+
+
+def validate(
+    contract_path: Path, site_dir: Path, navigation_base_url: str | None = None
+) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
-    contract = load_contract(contract_path)
-    base_url = normalize_base_url(contract.get("production_base_url", ""))
-    routes, route_by_id, route_by_path = build_routes(contract)
-    edges, nav, handoffs, exceptions = load_actions(contract, route_by_id)
-    check_reachability(contract, routes, route_by_id, edges, nav, errors)
+    contract = read_json(contract_path)
+    if contract.get("schema") != CONTRACT_SCHEMA:
+        raise ValidationError(f"contract schema must be {CONTRACT_SCHEMA!r}")
 
-    observed_edges: list[dict[str, Any]] = []
-    observed_handoffs: list[dict[str, Any]] = []
-    browser_required: list[dict[str, Any]] = []
-    seen_required_edges: set[tuple[str, str]] = set()
+    production_base = norm_base(contract.get("production_base_url", ""), "production_base_url")
+    navigation_base = norm_base(
+        navigation_base_url or production_base, "navigation_base_url"
+    )
+    routes, by_id, by_path = load_routes(contract)
+    transitions, navigation, handoffs, exceptions = load_action_contract(contract, by_id)
+    check_model(contract, routes, by_id, transitions, navigation, errors)
 
     discovery = contract.get("discovery") or {}
     if not isinstance(discovery, dict):
         raise ValidationError("discovery must be an object")
     sitemap_rel = discovery.get("sitemap", "sitemap.xml")
     robots_rel = discovery.get("robots", "robots.txt")
-    describedby_rel = discovery.get("machine_description")
-    sitemap_url = urljoin(base_url, sitemap_rel)
+    machine_rel = discovery.get("machine_description")
 
-    expected_sitemap: dict[str, str | None] = {}
-    for route in routes:
-        if route.indexable:
-            expected_sitemap[route_url(base_url, route.path)] = route.lastmod
-
+    expected_sitemap = {
+        project_url(production_base, route.path): route.lastmod
+        for route in routes if route.indexable
+    }
     actual_sitemap = parse_sitemap(site_dir / sitemap_rel)
-    if set(actual_sitemap) != set(expected_sitemap):
-        missing = sorted(set(expected_sitemap) - set(actual_sitemap))
-        unexpected = sorted(set(actual_sitemap) - set(expected_sitemap))
-        if missing:
-            fail(errors, f"sitemap missing indexable canonical routes: {missing}")
-        if unexpected:
-            fail(errors, f"sitemap contains undeclared/non-indexable routes: {unexpected}")
-    for loc in sorted(set(actual_sitemap) & set(expected_sitemap)):
-        expected_lastmod = expected_sitemap[loc]
-        actual_lastmod = actual_sitemap[loc]
-        if expected_lastmod != actual_lastmod:
-            fail(errors, f"sitemap lastmod mismatch for {loc}: expected {expected_lastmod!r}, got {actual_lastmod!r}")
+    missing = sorted(set(expected_sitemap) - set(actual_sitemap))
+    unexpected = sorted(set(actual_sitemap) - set(expected_sitemap))
+    if missing:
+        error(errors, f"sitemap missing indexable canonical routes: {missing}")
+    if unexpected:
+        error(errors, f"sitemap contains undeclared/non-indexable routes: {unexpected}")
+    for loc in sorted(set(expected_sitemap) & set(actual_sitemap)):
+        if expected_sitemap[loc] != actual_sitemap[loc]:
+            error(errors, f"sitemap lastmod mismatch for {loc}: expected {expected_sitemap[loc]!r}, got {actual_sitemap[loc]!r}")
 
+    sitemap_url = urljoin(production_base, sitemap_rel)
     robot_sitemaps, robot_directives = parse_robots(site_dir / robots_rel)
     if sitemap_url not in robot_sitemaps:
-        fail(errors, f"robots.txt must advertise canonical sitemap URL {sitemap_url}")
-    base_path = urlparse(base_url).path
-    for agent, directive in robot_directives:
-        if agent == "*" and directive.lower().startswith("disallow:"):
-            disallow = directive.split(":", 1)[1].strip()
-            if disallow in {"/", base_path, base_path.rstrip("/")}:
-                fail(errors, f"robots.txt blocks the production site for User-agent *: {directive}")
+        error(errors, f"robots.txt must advertise canonical sitemap URL {sitemap_url}")
+    production_path = urlparse(production_base).path
+    for agent, kind, value in robot_directives:
+        if agent == "*" and kind == "disallow" and value in {"/", production_path, production_path.rstrip("/")}:
+            error(errors, f"robots.txt blocks production site for User-agent *: Disallow: {value}")
+
+    observed_edges: list[dict[str, str]] = []
+    observed_handoffs: list[dict[str, str]] = []
+    browser_required: list[dict[str, str]] = []
+    seen_transitions: set[tuple[str, str]] = set()
+    seen_navigation: set[tuple[str, str]] = set()
+    internal_outgoing: dict[str, int] = defaultdict(int)
 
     for route in routes:
-        file_path = local_file_for_route(site_dir, route.path)
-        if not file_path.exists():
+        page_path = route_file(site_dir, route.path)
+        if not page_path.exists():
             if route.required:
-                fail(errors, f"missing required rendered route {route.id!r}: {file_path}")
+                error(errors, f"missing required rendered route {route.id!r}: {page_path}")
             continue
-        parser = parse_html(file_path)
-        if parser.states != [route.id]:
-            fail(errors, f"{route.id}: expected exactly data-surface-state={route.id!r}, observed {parser.states!r}")
-        if parser.title != route.title:
-            fail(errors, f"{route.id}: title mismatch: expected {route.title!r}, got {parser.title!r}")
+        page = parse_page(page_path)
+        canonical = project_url(production_base, route.path)
+        candidate_page = project_url(navigation_base, route.path)
 
-        canonical = route_url(base_url, route.path)
-        if parser.canonicals != [canonical]:
-            fail(errors, f"{route.id}: expected exactly canonical {canonical!r}, observed {parser.canonicals!r}")
-        noindex = any("noindex" in {t.strip().lower() for t in content.split(",")} for content in parser.meta_robots)
+        if page.states != [route.id]:
+            error(errors, f"{route.id}: expected exactly data-surface-state={route.id!r}, observed {page.states!r}")
+        if page.title != route.title:
+            error(errors, f"{route.id}: title mismatch: expected {route.title!r}, got {page.title!r}")
+        if page.canonicals != [canonical]:
+            error(errors, f"{route.id}: expected exactly canonical {canonical!r}, observed {page.canonicals!r}")
+        noindex = any(
+            "noindex" in {token.strip().lower() for token in value.split(",")}
+            for value in page.robots
+        )
         if route.indexable and noindex:
-            fail(errors, f"{route.id}: indexable route is marked noindex")
+            error(errors, f"{route.id}: indexable route is marked noindex")
         if not route.indexable and not noindex:
-            warnings.append(f"{route.id}: route is non-indexable by contract but page does not explicitly declare noindex")
+            warnings.append(f"{route.id}: non-indexable route does not explicitly declare noindex")
 
-        if describedby_rel:
-            describedby_abs = urljoin(base_url, describedby_rel)
-            resolved = {urljoin(canonical, href) for href in parser.describedby}
-            if describedby_abs not in resolved:
-                fail(errors, f"{route.id}: missing rel=describedby discovery link to {describedby_abs}")
+        if machine_rel:
+            expected_machine = urljoin(canonical, machine_rel) if machine_rel.startswith(".") else urljoin(production_base, machine_rel)
+            resolved = {urljoin(canonical, href) for href in page.describedby}
+            if expected_machine not in resolved:
+                error(errors, f"{route.id}: missing rel=describedby link to {expected_machine}")
 
-        for item in parser.actions:
-            action = item["action"]
-            href = item["href"]
-            tag = item["tag"]
+        for rendered in page.actions:
+            action, href, tag = rendered["action"], rendered["href"], rendered["tag"]
             if not action:
-                if tag == "a" and href:
-                    fail(errors, f"{route.id}: rendered link {href!r} lacks data-surface-action classification")
-                elif tag == "button":
-                    fail(errors, f"{route.id}: rendered button lacks data-surface-action classification")
+                if (tag == "a" and href) or tag == "button":
+                    error(errors, f"{route.id}: rendered {tag} lacks data-surface-action classification")
                 continue
 
-            edge = edges.get((route.id, action))
-            nav_item = nav.get(action)
+            transition = transitions.get((route.id, action))
+            nav = navigation.get(action)
             handoff = handoffs.get(action)
             exception = exceptions.get(action)
-            matched = sum(x is not None for x in (edge, nav_item, handoff, exception))
-            if matched == 0:
-                fail(errors, f"{route.id}: rendered action {action!r} is undeclared")
-                continue
-            if matched > 1:
-                fail(errors, f"{route.id}: rendered action {action!r} matches multiple classifications")
+            matches = sum(v is not None for v in (transition, nav, handoff, exception))
+            if matches != 1:
+                error(errors, f"{route.id}: rendered action {action!r} has {matches} declared classifications")
                 continue
             if exception:
                 continue
 
             if href is None:
-                if edge and bool(edge.get("browser_required", False)):
-                    browser_required.append({"from": route.id, "action": action, "to": edge["to"]})
-                    seen_required_edges.add((route.id, action))
-                elif nav_item and bool(nav_item.get("browser_required", False)):
-                    browser_required.append({"from": route.id, "action": action, "to": nav_item["to"]})
+                declared = transition or nav
+                if declared and bool(declared.get("browser_required", False)):
+                    target = declared["to"]
+                    browser_required.append({"from": route.id, "action": action, "to": target})
+                    internal_outgoing[route.id] += 1
+                    if transition:
+                        seen_transitions.add((route.id, action))
+                    if nav:
+                        seen_navigation.add((route.id, action))
                 else:
-                    fail(errors, f"{route.id}: action {action!r} has no href and is not declared browser_required")
+                    error(errors, f"{route.id}: action {action!r} has no href and is not browser_required")
                 continue
 
-            absolute = urljoin(canonical, href)
-            same_origin, in_base = is_same_site(absolute, base_url)
+            absolute = urljoin(candidate_page, href)
+            same_origin, in_base = same_origin_and_base(absolute, navigation_base)
 
-            if edge or nav_item:
-                target_id = edge["to"] if edge else nav_item["to"]
+            if transition or nav:
+                target = (transition or nav)["to"]
                 if same_origin and not in_base:
-                    fail(errors, f"{route.id}: internal action {action!r} escapes project base path: {absolute}")
+                    error(errors, f"{route.id}: internal action {action!r} escapes candidate project base path: {absolute}")
                     continue
                 if not same_origin:
-                    fail(errors, f"{route.id}: internal action {action!r} unexpectedly exits site: {absolute}")
+                    error(errors, f"{route.id}: internal action {action!r} unexpectedly exits candidate site: {absolute}")
                     continue
-                observed_target = route_id_for_absolute(absolute, base_url, route_by_path)
-                if observed_target != target_id:
-                    fail(errors, f"{route.id}: action {action!r} targets {observed_target!r}/{absolute}, expected {target_id!r}")
+                observed_target = target_route(absolute, navigation_base, by_path)
+                if observed_target != target:
+                    error(errors, f"{route.id}: action {action!r} targets {observed_target!r}/{absolute}, expected {target!r}")
                     continue
-                observed_edges.append({"from": route.id, "action": action, "to": target_id, "class": "flow" if edge else nav_item["class"]})
-                if edge:
-                    seen_required_edges.add((route.id, action))
+                cls = "flow" if transition else nav["class"]
+                observed_edges.append({"from": route.id, "action": action, "to": target, "class": cls})
+                internal_outgoing[route.id] += 1
+                if transition:
+                    seen_transitions.add((route.id, action))
+                if nav:
+                    seen_navigation.add((route.id, action))
                 continue
 
             if handoff:
                 if same_origin:
-                    fail(errors, f"{route.id}: external handoff {action!r} unexpectedly stays on same origin: {absolute}")
+                    error(errors, f"{route.id}: external handoff {action!r} unexpectedly stays on candidate origin: {absolute}")
                     continue
-                exact = handoff.get("url")
-                prefix = handoff.get("url_prefix")
+                exact, prefix = handoff.get("url"), handoff.get("url_prefix")
                 if exact and absolute != exact:
-                    fail(errors, f"{route.id}: handoff {action!r} URL mismatch: {absolute!r} != {exact!r}")
+                    error(errors, f"{route.id}: handoff {action!r} URL mismatch: {absolute!r} != {exact!r}")
                     continue
                 if prefix and not absolute.startswith(prefix):
-                    fail(errors, f"{route.id}: handoff {action!r} URL {absolute!r} does not match prefix {prefix!r}")
+                    error(errors, f"{route.id}: handoff {action!r} URL {absolute!r} does not match prefix {prefix!r}")
                     continue
-                declared_handoff = handoff.get("handoff")
-                observed_handoff = item.get("handoff")
-                if declared_handoff and observed_handoff != declared_handoff:
-                    fail(errors, f"{route.id}: handoff {action!r} requires data-surface-handoff={declared_handoff!r}, got {observed_handoff!r}")
+                if handoff.get("handoff") and rendered.get("handoff") != handoff["handoff"]:
+                    error(errors, f"{route.id}: handoff {action!r} requires data-surface-handoff={handoff['handoff']!r}")
                     continue
                 observed_handoffs.append({"from": route.id, "action": action, "url": absolute})
 
-    for key, edge in edges.items():
-        if bool(edge.get("required_rendered", True)) and key not in seen_required_edges:
-            fail(errors, f"required rendered transition missing: {key[0]} --{key[1]}--> {edge['to']}")
+    for key, item in transitions.items():
+        if bool(item.get("required_rendered", True)) and key not in seen_transitions:
+            error(errors, f"required rendered transition missing: {key[0]} --{key[1]}--> {item['to']}")
 
-    evidence = {
-        "schema": "public-surface-conformance-evidence/1",
-        "contract_schema": SCHEMA,
-        "production_base_url": base_url,
+    for action, item in navigation.items():
+        for source in required_sources(item, routes):
+            if source not in by_id:
+                raise ValidationError(f"navigation {action!r} required_on references unknown route {source!r}")
+            if (source, action) not in seen_navigation:
+                error(errors, f"required rendered {item['class']} navigation missing on {source!r}: {action!r}")
+
+    for route in routes:
+        if route.required and not route.terminal and internal_outgoing[route.id] == 0:
+            error(errors, f"required non-terminal route/state {route.id!r} is a rendered dead end")
+
+    return {
+        "schema": EVIDENCE_SCHEMA,
+        "contract_schema": CONTRACT_SCHEMA,
+        "production_base_url": production_base,
+        "navigation_base_url": navigation_base,
         "route_count": len(routes),
-        "expected_transition_count": len(edges),
+        "expected_transition_count": len(transitions),
         "observed_edge_count": len(observed_edges),
         "observed_handoff_count": len(observed_handoffs),
-        "browser_required_actions": sorted(browser_required, key=lambda x: (x["from"], x["action"], x["to"])),
-        "observed_edges": sorted(observed_edges, key=lambda x: (x["from"], x["action"], x["to"])),
-        "external_handoffs": sorted(observed_handoffs, key=lambda x: (x["from"], x["action"], x["url"])),
+        "browser_required_actions": sorted(browser_required, key=lambda v: (v["from"], v["action"], v["to"])),
+        "observed_edges": sorted(observed_edges, key=lambda v: (v["from"], v["action"], v["to"])),
+        "external_handoffs": sorted(observed_handoffs, key=lambda v: (v["from"], v["action"], v["url"])),
         "sitemap_routes": sorted(actual_sitemap),
         "warnings": sorted(warnings),
         "errors": sorted(errors),
         "verdict": "pass" if not errors else "fail",
     }
-    return evidence
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--contract", required=True, type=Path)
     parser.add_argument("--site-dir", required=True, type=Path)
+    parser.add_argument("--navigation-base")
     parser.add_argument("--evidence", type=Path)
     args = parser.parse_args()
-
     try:
-        evidence = validate(args.contract, args.site_dir)
+        evidence = validate(args.contract, args.site_dir, args.navigation_base)
     except ValidationError as exc:
         evidence = {
-            "schema": "public-surface-conformance-evidence/1",
-            "contract_schema": SCHEMA,
+            "schema": EVIDENCE_SCHEMA,
+            "contract_schema": CONTRACT_SCHEMA,
             "verdict": "fail",
             "errors": [str(exc)],
             "warnings": [],
         }
-
-    encoded = json.dumps(evidence, indent=2, sort_keys=True) + "\n"
+    text = json.dumps(evidence, indent=2, sort_keys=True) + "\n"
     if args.evidence:
         args.evidence.parent.mkdir(parents=True, exist_ok=True)
-        args.evidence.write_text(encoded, encoding="utf-8")
-    sys.stdout.write(encoded)
+        args.evidence.write_text(text, encoding="utf-8")
+    sys.stdout.write(text)
     return 0 if evidence["verdict"] == "pass" else 1
 
 
