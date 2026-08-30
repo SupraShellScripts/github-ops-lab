@@ -10,6 +10,7 @@ on:
       - 'experiments/fritzbox/dns_boundary_scan.py'
       - 'experiments/fritzbox/dns_uimod_bridge_scan.py'
       - 'experiments/fritzbox/dns_resource_mapping_scan.py'
+      - 'experiments/fritzbox/dns_validation_coupling_scan.py'
   workflow_dispatch:
 
 permissions:
@@ -166,6 +167,17 @@ jobs:
           grep -E 'generic/dnsserver|dns_over_tls|dnscfg|firstdns|seconddns|api_generic|webvar|uimod' "$work/report/resource-map/dns-resource-map-json-context.tsv" | head -n 240 || true
           echo '--- DNS data-adapter contexts ---'
           cat "$work/report/resource-map/dns-resource-map-data-context.tsv"
+
+      - name: Trace DNS validation and native save coupling only
+        shell: bash
+        run: |
+          set -euo pipefail
+          work='${{ steps.firmware.outputs.work }}'
+          root="$(cat "$work/root-path.txt")"
+          python experiments/fritzbox/dns_validation_coupling_scan.py "$root" --output "$work/report/validation-coupling"
+          cat "$work/report/validation-coupling/dns-validation-coupling-summary.md"
+          echo '--- validation/configuration calls ---'
+          cat "$work/report/validation-coupling/dns-validation-coupling-calls.tsv"
 
       - name: Delete proprietary payloads and verify report boundary
         shell: bash
