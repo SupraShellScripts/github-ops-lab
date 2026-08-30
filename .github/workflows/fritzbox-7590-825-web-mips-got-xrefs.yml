@@ -1,0 +1,136 @@
+name: FRITZ!Box 7590 8.25 Web MIPS GOT xref scan
+
+on:
+  pull_request:
+    branches:
+      - experiment/issue-24-fritzbox-web-callback-xrefs
+    paths:
+      - '.github/workflows/fritzbox-7590-825-web-mips-got-xrefs.yml'
+      - 'experiments/fritzbox/dns_web_mips_got_xref_scan.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FW_URL: https://download.avm.de/fritzbox/fritzbox-7590/deutschland/fritz.os/FRITZ.Box_7590-08.25.image
+      FW_NAME: FRITZ.Box_7590-08.25.image
+      FW_SHA256: 267ef427337d2141736ad6ed5d9389722a6a1234dd590bb7d4ebf11a00616c0d
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+
+      - name: Install extraction and MIPS analysis tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            curl file squashfs-tools binutils \
+            binutils-mips-linux-gnu binutils-mipsel-linux-gnu
+
+      - name: Download and verify exact official firmware
+        id: firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/fritz-web-mips-got"
+          mkdir -p "$work/payload" "$work/roots" "$work/report"
+          fw="$work/$FW_NAME"
+          curl --fail --location --retry 4 --retry-all-errors --silent --show-error "$FW_URL" -o "$fw"
+          actual="$(sha256sum "$fw" | awk '{print $1}')"
+          test "$actual" = "$FW_SHA256"
+          echo "work=$work" >> "$GITHUB_OUTPUT"
+          printf 'source\t%s\nsha256\t%s\nbytes\t%s\n' "$FW_URL" "$actual" "$(stat -c '%s' "$fw")" > "$work/report/provenance.tsv"
+
+      - name: Extract stock filesystem read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          work='${{ steps.firmware.outputs.work }}'
+          fw="$work/$FW_NAME"
+          tar -xf "$fw" -C "$work/payload"
+
+          python3 - "$work" <<'PY'
+          import pathlib, sys
+          work=pathlib.Path(sys.argv[1])
+          rows=[]
+          for path in (work/'payload').rglob('*'):
+              if not path.is_file() or path.stat().st_size < 4096:
+                  continue
+              try:
+                  data=path.read_bytes()
+              except OSError:
+                  continue
+              start=0
+              while True:
+                  off=data.find(b'hsqs', start)
+                  if off < 0:
+                      break
+                  rows.append((str(path.relative_to(work/'payload')), off))
+                  start=off+4
+          with (work/'squashfs.tsv').open('w') as handle:
+              for rel, off in rows:
+                  handle.write(f'{rel}\t{off}\n')
+          PY
+
+          n=0
+          while IFS=$'\t' read -r rel off; do
+            [ -n "${rel:-}" ] || continue
+            n=$((n+1))
+            candidate="$work/squashfs-$n.img"
+            dd if="$work/payload/$rel" of="$candidate" bs=1 skip="$off" status=none
+            if ! unsquashfs -d "$work/roots/root-$n" "$candidate" >/dev/null 2>&1; then
+              rm -rf "$work/roots/root-$n"
+            fi
+            rm -f "$candidate"
+          done < "$work/squashfs.tsv"
+
+          target="$(find "$work/roots" -type f -path '*/usr/www/avm/internet/dnsserver.lua' -print -quit)"
+          if [ -z "$target" ]; then
+            echo 'dnsserver.lua not found in extracted filesystem' >&2
+            exit 1
+          fi
+          root="${target%/usr/www/avm/internet/dnsserver.lua}"
+          printf '%s' "$root" > "$work/root-path.txt"
+
+      - name: Derive MIPS GOT-mediated callback evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          work='${{ steps.firmware.outputs.work }}'
+          root="$(cat "$work/root-path.txt")"
+          python experiments/fritzbox/dns_web_mips_got_xref_scan.py "$root" --output "$work/report/web-mips-got-xrefs"
+          cat "$work/report/web-mips-got-xrefs/mips-got-summary.md"
+          echo '--- focus GOT entries ---'
+          cat "$work/report/web-mips-got-xrefs/mips-got-focus-entries.tsv"
+          echo '--- recovered call sites ---'
+          cat "$work/report/web-mips-got-xrefs/mips-got-call-sites.tsv"
+
+      - name: Delete proprietary payloads and verify report boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          work='${{ steps.firmware.outputs.work }}'
+          rm -f "$work/$FW_NAME" "$work/root-path.txt" "$work/squashfs.tsv"
+          rm -rf "$work/payload" "$work/roots"
+          test ! -e "$work/$FW_NAME"
+          if find "$work/report" -type f -size +2M -print -quit | grep -q .; then
+            echo 'Refusing unexpectedly large derived report.' >&2
+            exit 1
+          fi
+          find "$work/report" -type f -printf '%P\t%s\n' | sort
+
+      - name: Upload sanitized derived evidence only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fritzbox-7590-8.25-web-mips-got-xrefs
+          path: ${{ runner.temp }}/fritz-web-mips-got/report/
+          if-no-files-found: error
+          retention-days: 7
