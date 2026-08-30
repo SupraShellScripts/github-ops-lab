@@ -1,0 +1,165 @@
+name: Public site release readiness
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: Relative directory containing the consumer web QA package and configs
+        required: false
+        type: string
+        default: .
+      node_version:
+        description: Node.js version used by the consumer QA package
+        required: false
+        type: string
+        default: '22'
+      build_command:
+        description: Command that builds exact candidate site bytes for local qualification
+        required: true
+        type: string
+      validate_command:
+        description: Optional deterministic candidate validation command
+        required: false
+        type: string
+        default: ''
+      install_command:
+        description: Command that installs the consumer web QA dependencies
+        required: false
+        type: string
+        default: npm install --ignore-scripts --no-audit --no-fund
+      browser_install_command:
+        description: Command that installs the required Playwright browser engines
+        required: false
+        type: string
+        default: npx playwright install --with-deps chromium firefox webkit
+      playwright_command:
+        description: Consumer-owned Playwright/axe browser and journey command
+        required: false
+        type: string
+        default: npm run site:test
+      lighthouse_enabled:
+        description: Run the consumer-owned Lighthouse CI command
+        required: false
+        type: boolean
+        default: true
+      lighthouse_command:
+        description: Consumer-owned Lighthouse CI command
+        required: false
+        type: string
+        default: npm run site:lighthouse
+      lychee_args:
+        description: Complete public-safe Lychee arguments and paths, evaluated from repository root
+        required: true
+        type: string
+      evidence_paths:
+        description: Newline-separated repository-relative evidence paths to upload
+        required: false
+        type: string
+        default: |
+          build/playwright-report
+          build/playwright-results
+          build/lighthouse
+          lychee/out.md
+      artifact_name:
+        description: Evidence artifact name
+        required: false
+        type: string
+        default: public-site-readiness
+      retention_days:
+        description: Evidence retention in days
+        required: false
+        type: number
+        default: 14
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    name: Candidate public site
+    runs-on: ubuntu-latest
+    env:
+      WORKING_DIRECTORY: ${{ inputs.working_directory }}
+    steps:
+      - name: Checkout caller revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Build candidate public site
+        env:
+          COMMAND: ${{ inputs.build_command }}
+        run: |
+          set -euo pipefail
+          cd "$WORKING_DIRECTORY"
+          bash -euo pipefail -c "$COMMAND"
+
+      - name: Validate deterministic candidate contract
+        if: ${{ inputs.validate_command != '' }}
+        env:
+          COMMAND: ${{ inputs.validate_command }}
+        run: |
+          set -euo pipefail
+          cd "$WORKING_DIRECTORY"
+          bash -euo pipefail -c "$COMMAND"
+
+      - name: Install web QA dependencies
+        env:
+          COMMAND: ${{ inputs.install_command }}
+        run: |
+          set -euo pipefail
+          cd "$WORKING_DIRECTORY"
+          bash -euo pipefail -c "$COMMAND"
+
+      - name: Install Playwright browser engines
+        env:
+          COMMAND: ${{ inputs.browser_install_command }}
+        run: |
+          set -euo pipefail
+          cd "$WORKING_DIRECTORY"
+          bash -euo pipefail -c "$COMMAND"
+
+      - name: Run Playwright browser and accessibility matrix
+        env:
+          COMMAND: ${{ inputs.playwright_command }}
+        run: |
+          set -euo pipefail
+          cd "$WORKING_DIRECTORY"
+          bash -euo pipefail -c "$COMMAND"
+
+      - name: Resolve Chromium for Lighthouse
+        if: ${{ inputs.lighthouse_enabled }}
+        run: |
+          set -euo pipefail
+          cd "$WORKING_DIRECTORY"
+          CHROME_PATH="$(node --input-type=module -e "import { chromium } from '@playwright/test'; process.stdout.write(chromium.executablePath())")"
+          echo "CHROME_PATH=$CHROME_PATH" >> "$GITHUB_ENV"
+
+      - name: Run Lighthouse CI budgets
+        if: ${{ inputs.lighthouse_enabled }}
+        env:
+          COMMAND: ${{ inputs.lighthouse_command }}
+        run: |
+          set -euo pipefail
+          cd "$WORKING_DIRECTORY"
+          bash -euo pipefail -c "$COMMAND"
+
+      - name: Check public link integrity
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8
+        with:
+          lycheeVersion: v0.24.2
+          args: ${{ inputs.lychee_args }}
+
+      - name: Upload public-site readiness evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ inputs.evidence_paths }}
+          if-no-files-found: ignore
+          retention-days: ${{ inputs.retention_days }}
