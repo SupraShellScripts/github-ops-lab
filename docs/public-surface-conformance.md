@@ -290,7 +290,7 @@ When `discovery.machine_description` is declared, the candidate must contain tha
 <link rel="describedby" href="../surface.json">
 ```
 
-The validator resolves the relation against the route's production canonical URL.
+During candidate qualification, the validator resolves that relation against the candidate page/navigation base so it proves the candidate's own machine description rather than a previously deployed copy. On the production build, the same relative relation resolves under the production project base. Canonical URLs remain independently checked against `production_base_url`.
 
 ## External handoffs
 
