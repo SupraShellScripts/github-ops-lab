@@ -7,6 +7,7 @@ on:
       - '.github/workflows/fritzbox-7590-825-dns-state-machine.yml'
       - 'experiments/fritzbox/dns_state_machine_scan.py'
       - 'experiments/fritzbox/dns_convergence_scan.py'
+      - 'experiments/fritzbox/dns_boundary_scan.py'
   workflow_dispatch:
 
 permissions:
@@ -26,7 +27,7 @@ jobs:
       - name: Install extraction tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends curl file squashfs-tools
+          sudo apt-get install -y --no-install-recommends curl file squashfs-tools binutils
 
       - name: Download exact official firmware
         id: firmware
@@ -116,12 +117,27 @@ jobs:
           root="$(cat "$work/root-path.txt")"
           python experiments/fritzbox/dns_convergence_scan.py "$root" --output "$work/report/convergence"
           cat "$work/report/convergence/convergence-summary.md"
-          echo '--- convergence anchor hits ---'
-          head -n 160 "$work/report/convergence/convergence-anchor-hits.tsv"
           echo '--- implementation path candidates ---'
           head -n 120 "$work/report/convergence/convergence-path-candidates.tsv"
-          echo '--- multi-category co-occurrence ---'
-          head -n 120 "$work/report/convergence/convergence-cooccurrence.tsv"
+          echo '--- relevant co-occurrence ---'
+          grep -E 'api_generic|dnsserver\.data|dnscfg\.data|internet/dnsserver|libcmapi|rest_api_resources' "$work/report/convergence/convergence-cooccurrence.tsv" | head -n 120 || true
+
+      - name: Derive focused DNS API/configuration boundary evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          work='${{ steps.firmware.outputs.work }}'
+          root="$(cat "$work/root-path.txt")"
+          python experiments/fritzbox/dns_boundary_scan.py "$root" --output "$work/report/boundary"
+          cat "$work/report/boundary/boundary-summary.md"
+          echo '--- text boundary calls ---'
+          head -n 160 "$work/report/boundary/boundary-text-calls.tsv"
+          echo '--- ELF dependency edges ---'
+          cat "$work/report/boundary/boundary-elf-dependencies.tsv"
+          echo '--- filtered ELF symbols ---'
+          head -n 240 "$work/report/boundary/boundary-elf-symbols.tsv"
+          echo '--- anchor offsets ---'
+          cat "$work/report/boundary/boundary-anchor-offsets.tsv"
 
       - name: Delete proprietary payloads and verify report boundary
         shell: bash
