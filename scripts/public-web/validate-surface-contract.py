@@ -17,6 +17,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 
 CONTRACT_SCHEMA = "public-surface-contract/1"
 EVIDENCE_SCHEMA = "public-surface-conformance-evidence/1"
+SELF = "$self"
 
 
 class ValidationError(Exception):
@@ -82,7 +83,7 @@ class PageParser(HTMLParser):
         return " ".join("".join(self._title).split())
 
 
-def error(errors: list[str], message: str) -> None:
+def add_error(errors: list[str], message: str) -> None:
     errors.append(message)
 
 
@@ -96,12 +97,12 @@ def norm_base(value: str, field: str) -> str:
     return urlunparse((p.scheme, p.netloc, path, "", "", ""))
 
 
-def norm_route(value: Any) -> str:
+def norm_project_path(value: Any) -> str:
     if not isinstance(value, str) or not value.startswith("/"):
-        raise ValidationError(f"route path must start with '/': {value!r}")
+        raise ValidationError(f"project path must start with '/': {value!r}")
     p = urlparse(value)
     if p.scheme or p.netloc or p.query or p.fragment:
-        raise ValidationError(f"route path must be path-only: {value!r}")
+        raise ValidationError(f"project path must be path-only: {value!r}")
     raw = re.sub(r"/+", "/", p.path)
     norm = posixpath.normpath(raw)
     if not norm.startswith("/"):
@@ -111,8 +112,8 @@ def norm_route(value: Any) -> str:
     return norm
 
 
-def project_url(base: str, route_path: str) -> str:
-    return urljoin(base, route_path.lstrip("/"))
+def project_url(base: str, project_path: str) -> str:
+    return urljoin(base, project_path.lstrip("/"))
 
 
 def route_file(site_dir: Path, path: str) -> Path:
@@ -158,7 +159,7 @@ def load_routes(contract: dict[str, Any]) -> tuple[list[Route], dict[str, Route]
             raise ValidationError("route id must be a non-empty string")
         if not isinstance(title, str) or not title.strip():
             raise ValidationError(f"route {rid!r} requires an exact expected title")
-        path = norm_route(raw.get("path"))
+        path = norm_project_path(raw.get("path"))
         if rid in by_id or path in by_path:
             raise ValidationError(f"duplicate route id/path: {rid!r} {path!r}")
         lastmod = raw.get("lastmod")
@@ -184,9 +185,11 @@ def load_action_contract(
     dict[str, dict[str, Any]],
     dict[str, dict[str, Any]],
     dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
 ]:
     transitions: dict[tuple[str, str], dict[str, Any]] = {}
     navigation: dict[str, dict[str, Any]] = {}
+    resources: dict[str, dict[str, Any]] = {}
     handoffs: dict[str, dict[str, Any]] = {}
     exceptions: dict[str, dict[str, Any]] = {}
 
@@ -205,11 +208,34 @@ def load_action_contract(
         if not isinstance(item, dict):
             raise ValidationError("navigation entries must be objects")
         action, target, cls = item.get("action"), item.get("to"), item.get("class")
-        if not isinstance(action, str) or not action or target not in by_id or cls not in {"global", "utility"}:
+        if (
+            not isinstance(action, str) or not action
+            or (target != SELF and target not in by_id)
+            or cls not in {"global", "utility"}
+        ):
             raise ValidationError(f"invalid navigation: {item!r}")
         if action in navigation:
             raise ValidationError(f"duplicate navigation action {action!r}")
         navigation[action] = item
+
+    for item in contract.get("resources", []):
+        if not isinstance(item, dict):
+            raise ValidationError("resource entries must be objects")
+        action = item.get("action")
+        exact, prefix = item.get("path"), item.get("path_prefix")
+        if not isinstance(action, str) or not action:
+            raise ValidationError(f"invalid resource action: {item!r}")
+        if bool(exact) == bool(prefix):
+            raise ValidationError(f"resource {action!r} requires exactly one of path/path_prefix")
+        if exact:
+            item = dict(item)
+            item["path"] = norm_project_path(exact)
+        if prefix:
+            item = dict(item)
+            item["path_prefix"] = norm_project_path(prefix)
+        if action in resources:
+            raise ValidationError(f"duplicate resource action {action!r}")
+        resources[action] = item
 
     for item in contract.get("handoffs", []):
         if not isinstance(item, dict):
@@ -234,12 +260,17 @@ def load_action_contract(
         exceptions[action] = item
 
     seen: dict[str, str] = {}
-    for kind, mapping in [("navigation", navigation), ("handoff", handoffs), ("exception", exceptions)]:
+    for kind, mapping in [
+        ("navigation", navigation),
+        ("resource", resources),
+        ("handoff", handoffs),
+        ("exception", exceptions),
+    ]:
         for action in mapping:
             if action in seen:
                 raise ValidationError(f"action {action!r} appears in both {seen[action]} and {kind}")
             seen[action] = kind
-    return transitions, navigation, handoffs, exceptions
+    return transitions, navigation, resources, handoffs, exceptions
 
 
 def check_model(
@@ -252,14 +283,15 @@ def check_model(
 ) -> None:
     entries = contract.get("entry_states")
     if not isinstance(entries, list) or not entries or any(e not in by_id for e in entries):
-        error(errors, "entry_states must be a non-empty list of declared route ids")
+        add_error(errors, "entry_states must be a non-empty list of declared route ids")
         return
     graph: dict[str, set[str]] = defaultdict(set)
     for (src, _), item in transitions.items():
         graph[src].add(item["to"])
     for src in by_id:
         for item in navigation.values():
-            graph[src].add(item["to"])
+            target = src if item["to"] == SELF else item["to"]
+            graph[src].add(target)
     seen: set[str] = set()
     queue = deque(entries)
     while queue:
@@ -270,7 +302,7 @@ def check_model(
         queue.extend(sorted(graph[current] - seen))
     for route in routes:
         if route.required and route.id not in seen:
-            error(errors, f"required route/state {route.id!r} is unreachable from entry_states")
+            add_error(errors, f"required route/state {route.id!r} is unreachable from entry_states")
 
 
 def parse_sitemap(path: Path) -> dict[str, str | None]:
@@ -330,31 +362,36 @@ def same_origin_and_base(url: str, base: str) -> tuple[bool, bool]:
     return same_origin, same_origin and (u.path == base_path[:-1] or u.path.startswith(base_path))
 
 
-def target_route(url: str, navigation_base: str, by_path: dict[str, Route]) -> str | None:
-    u, b = urlparse(url), urlparse(navigation_base)
+def project_path_for_url(url: str, base: str) -> str | None:
+    u, b = urlparse(url), urlparse(base)
     base_path = b.path if b.path.endswith("/") else b.path + "/"
-    if not (u.path == base_path[:-1] or u.path.startswith(base_path)):
+    if u.path == base_path[:-1]:
+        return "/"
+    if not u.path.startswith(base_path):
         return None
-    rel = "" if u.path == base_path[:-1] else u.path[len(base_path):]
-    path = norm_route("/" + rel)
+    return norm_project_path("/" + u.path[len(base_path):])
+
+
+def target_route(url: str, navigation_base: str, by_path: dict[str, Route]) -> str | None:
+    path = project_path_for_url(url, navigation_base)
+    if path is None:
+        return None
     route = by_path.get(path)
     return route.id if route else None
 
 
-def required_sources(item: dict[str, Any], routes: list[Route]) -> set[str]:
+def required_sources(item: dict[str, Any], routes: list[Route], default_all: bool) -> set[str]:
     raw = item.get("required_on")
     if raw is None:
-        return {route.id for route in routes if route.required}
+        return {route.id for route in routes if route.required} if default_all else set()
     if raw is False:
         return set()
     if not isinstance(raw, list) or any(not isinstance(v, str) for v in raw):
-        raise ValidationError("navigation required_on must be false or a list of route ids")
+        raise ValidationError("required_on must be false or a list of route ids")
     return set(raw)
 
 
-def validate(
-    contract_path: Path, site_dir: Path, navigation_base_url: str | None = None
-) -> dict[str, Any]:
+def validate(contract_path: Path, site_dir: Path, navigation_base_url: str | None = None) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
     contract = read_json(contract_path)
@@ -362,11 +399,9 @@ def validate(
         raise ValidationError(f"contract schema must be {CONTRACT_SCHEMA!r}")
 
     production_base = norm_base(contract.get("production_base_url", ""), "production_base_url")
-    navigation_base = norm_base(
-        navigation_base_url or production_base, "navigation_base_url"
-    )
+    navigation_base = norm_base(navigation_base_url or production_base, "navigation_base_url")
     routes, by_id, by_path = load_routes(contract)
-    transitions, navigation, handoffs, exceptions = load_action_contract(contract, by_id)
+    transitions, navigation, resources, handoffs, exceptions = load_action_contract(contract, by_id)
     check_model(contract, routes, by_id, transitions, navigation, errors)
 
     discovery = contract.get("discovery") or {}
@@ -384,74 +419,86 @@ def validate(
     missing = sorted(set(expected_sitemap) - set(actual_sitemap))
     unexpected = sorted(set(actual_sitemap) - set(expected_sitemap))
     if missing:
-        error(errors, f"sitemap missing indexable canonical routes: {missing}")
+        add_error(errors, f"sitemap missing indexable canonical routes: {missing}")
     if unexpected:
-        error(errors, f"sitemap contains undeclared/non-indexable routes: {unexpected}")
+        add_error(errors, f"sitemap contains undeclared/non-indexable routes: {unexpected}")
     for loc in sorted(set(expected_sitemap) & set(actual_sitemap)):
         if expected_sitemap[loc] != actual_sitemap[loc]:
-            error(errors, f"sitemap lastmod mismatch for {loc}: expected {expected_sitemap[loc]!r}, got {actual_sitemap[loc]!r}")
+            add_error(errors, f"sitemap lastmod mismatch for {loc}: expected {expected_sitemap[loc]!r}, got {actual_sitemap[loc]!r}")
 
     sitemap_url = urljoin(production_base, sitemap_rel)
     robot_sitemaps, robot_directives = parse_robots(site_dir / robots_rel)
     if sitemap_url not in robot_sitemaps:
-        error(errors, f"robots.txt must advertise canonical sitemap URL {sitemap_url}")
+        add_error(errors, f"robots.txt must advertise canonical sitemap URL {sitemap_url}")
     production_path = urlparse(production_base).path
     for agent, kind, value in robot_directives:
         if agent == "*" and kind == "disallow" and value in {"/", production_path, production_path.rstrip("/")}:
-            error(errors, f"robots.txt blocks production site for User-agent *: Disallow: {value}")
+            add_error(errors, f"robots.txt blocks production site for User-agent *: Disallow: {value}")
+
+    if machine_rel and not urlparse(machine_rel).scheme:
+        machine_path = site_dir / machine_rel.lstrip("/")
+        if not machine_path.exists():
+            add_error(errors, f"declared machine description does not exist in candidate bytes: {machine_path}")
 
     observed_edges: list[dict[str, str]] = []
+    observed_resources: list[dict[str, str]] = []
     observed_handoffs: list[dict[str, str]] = []
     browser_required: list[dict[str, str]] = []
     seen_transitions: set[tuple[str, str]] = set()
     seen_navigation: set[tuple[str, str]] = set()
-    internal_outgoing: dict[str, int] = defaultdict(int)
+    seen_resources: set[tuple[str, str]] = set()
+    recovery_edges: dict[str, int] = defaultdict(int)
 
     for route in routes:
         page_path = route_file(site_dir, route.path)
         if not page_path.exists():
             if route.required:
-                error(errors, f"missing required rendered route {route.id!r}: {page_path}")
+                add_error(errors, f"missing required rendered route {route.id!r}: {page_path}")
             continue
         page = parse_page(page_path)
         canonical = project_url(production_base, route.path)
         candidate_page = project_url(navigation_base, route.path)
 
         if page.states != [route.id]:
-            error(errors, f"{route.id}: expected exactly data-surface-state={route.id!r}, observed {page.states!r}")
+            add_error(errors, f"{route.id}: expected exactly data-surface-state={route.id!r}, observed {page.states!r}")
         if page.title != route.title:
-            error(errors, f"{route.id}: title mismatch: expected {route.title!r}, got {page.title!r}")
+            add_error(errors, f"{route.id}: title mismatch: expected {route.title!r}, got {page.title!r}")
         if page.canonicals != [canonical]:
-            error(errors, f"{route.id}: expected exactly canonical {canonical!r}, observed {page.canonicals!r}")
+            add_error(errors, f"{route.id}: expected exactly canonical {canonical!r}, observed {page.canonicals!r}")
         noindex = any(
             "noindex" in {token.strip().lower() for token in value.split(",")}
             for value in page.robots
         )
         if route.indexable and noindex:
-            error(errors, f"{route.id}: indexable route is marked noindex")
+            add_error(errors, f"{route.id}: indexable route is marked noindex")
         if not route.indexable and not noindex:
             warnings.append(f"{route.id}: non-indexable route does not explicitly declare noindex")
 
         if machine_rel:
-            expected_machine = urljoin(canonical, machine_rel) if machine_rel.startswith(".") else urljoin(production_base, machine_rel)
+            expected_machine = (
+                urljoin(canonical, machine_rel)
+                if machine_rel.startswith(".")
+                else urljoin(production_base, machine_rel)
+            )
             resolved = {urljoin(canonical, href) for href in page.describedby}
             if expected_machine not in resolved:
-                error(errors, f"{route.id}: missing rel=describedby link to {expected_machine}")
+                add_error(errors, f"{route.id}: missing rel=describedby link to {expected_machine}")
 
         for rendered in page.actions:
             action, href, tag = rendered["action"], rendered["href"], rendered["tag"]
             if not action:
                 if (tag == "a" and href) or tag == "button":
-                    error(errors, f"{route.id}: rendered {tag} lacks data-surface-action classification")
+                    add_error(errors, f"{route.id}: rendered {tag} lacks data-surface-action classification")
                 continue
 
             transition = transitions.get((route.id, action))
             nav = navigation.get(action)
+            resource = resources.get(action)
             handoff = handoffs.get(action)
             exception = exceptions.get(action)
-            matches = sum(v is not None for v in (transition, nav, handoff, exception))
+            matches = sum(v is not None for v in (transition, nav, resource, handoff, exception))
             if matches != 1:
-                error(errors, f"{route.id}: rendered action {action!r} has {matches} declared classifications")
+                add_error(errors, f"{route.id}: rendered action {action!r} has {matches} declared classifications")
                 continue
             if exception:
                 continue
@@ -459,71 +506,101 @@ def validate(
             if href is None:
                 declared = transition or nav
                 if declared and bool(declared.get("browser_required", False)):
-                    target = declared["to"]
+                    raw_target = declared["to"]
+                    target = route.id if raw_target == SELF else raw_target
                     browser_required.append({"from": route.id, "action": action, "to": target})
-                    internal_outgoing[route.id] += 1
+                    if target != route.id:
+                        recovery_edges[route.id] += 1
                     if transition:
                         seen_transitions.add((route.id, action))
                     if nav:
                         seen_navigation.add((route.id, action))
                 else:
-                    error(errors, f"{route.id}: action {action!r} has no href and is not browser_required")
+                    add_error(errors, f"{route.id}: action {action!r} has no href and is not browser_required")
                 continue
 
             absolute = urljoin(candidate_page, href)
             same_origin, in_base = same_origin_and_base(absolute, navigation_base)
 
             if transition or nav:
-                target = (transition or nav)["to"]
+                raw_target = (transition or nav)["to"]
+                target = route.id if raw_target == SELF else raw_target
                 if same_origin and not in_base:
-                    error(errors, f"{route.id}: internal action {action!r} escapes candidate project base path: {absolute}")
+                    add_error(errors, f"{route.id}: internal action {action!r} escapes candidate project base path: {absolute}")
                     continue
                 if not same_origin:
-                    error(errors, f"{route.id}: internal action {action!r} unexpectedly exits candidate site: {absolute}")
+                    add_error(errors, f"{route.id}: internal action {action!r} unexpectedly exits candidate site: {absolute}")
                     continue
                 observed_target = target_route(absolute, navigation_base, by_path)
                 if observed_target != target:
-                    error(errors, f"{route.id}: action {action!r} targets {observed_target!r}/{absolute}, expected {target!r}")
+                    add_error(errors, f"{route.id}: action {action!r} targets {observed_target!r}/{absolute}, expected {target!r}")
                     continue
-                cls = "flow" if transition else nav["class"]
+                cls = "flow" if transition else (transition or nav)["class"]
                 observed_edges.append({"from": route.id, "action": action, "to": target, "class": cls})
-                internal_outgoing[route.id] += 1
+                if target != route.id:
+                    recovery_edges[route.id] += 1
                 if transition:
                     seen_transitions.add((route.id, action))
                 if nav:
                     seen_navigation.add((route.id, action))
                 continue
 
+            if resource:
+                if same_origin and not in_base:
+                    add_error(errors, f"{route.id}: resource action {action!r} escapes candidate project base path: {absolute}")
+                    continue
+                if not same_origin:
+                    add_error(errors, f"{route.id}: internal resource action {action!r} unexpectedly exits candidate site: {absolute}")
+                    continue
+                observed_path = project_path_for_url(absolute, navigation_base)
+                exact, prefix = resource.get("path"), resource.get("path_prefix")
+                if exact and observed_path != exact:
+                    add_error(errors, f"{route.id}: resource {action!r} path mismatch: {observed_path!r} != {exact!r}")
+                    continue
+                if prefix and (observed_path is None or not observed_path.startswith(prefix)):
+                    add_error(errors, f"{route.id}: resource {action!r} path {observed_path!r} does not match prefix {prefix!r}")
+                    continue
+                observed_resources.append({"from": route.id, "action": action, "path": observed_path or ""})
+                seen_resources.add((route.id, action))
+                continue
+
             if handoff:
                 if same_origin:
-                    error(errors, f"{route.id}: external handoff {action!r} unexpectedly stays on candidate origin: {absolute}")
+                    add_error(errors, f"{route.id}: external handoff {action!r} unexpectedly stays on candidate origin: {absolute}")
                     continue
                 exact, prefix = handoff.get("url"), handoff.get("url_prefix")
                 if exact and absolute != exact:
-                    error(errors, f"{route.id}: handoff {action!r} URL mismatch: {absolute!r} != {exact!r}")
+                    add_error(errors, f"{route.id}: handoff {action!r} URL mismatch: {absolute!r} != {exact!r}")
                     continue
                 if prefix and not absolute.startswith(prefix):
-                    error(errors, f"{route.id}: handoff {action!r} URL {absolute!r} does not match prefix {prefix!r}")
+                    add_error(errors, f"{route.id}: handoff {action!r} URL {absolute!r} does not match prefix {prefix!r}")
                     continue
                 if handoff.get("handoff") and rendered.get("handoff") != handoff["handoff"]:
-                    error(errors, f"{route.id}: handoff {action!r} requires data-surface-handoff={handoff['handoff']!r}")
+                    add_error(errors, f"{route.id}: handoff {action!r} requires data-surface-handoff={handoff['handoff']!r}")
                     continue
                 observed_handoffs.append({"from": route.id, "action": action, "url": absolute})
 
     for key, item in transitions.items():
         if bool(item.get("required_rendered", True)) and key not in seen_transitions:
-            error(errors, f"required rendered transition missing: {key[0]} --{key[1]}--> {item['to']}")
+            add_error(errors, f"required rendered transition missing: {key[0]} --{key[1]}--> {item['to']}")
 
     for action, item in navigation.items():
-        for source in required_sources(item, routes):
+        for source in required_sources(item, routes, default_all=True):
             if source not in by_id:
                 raise ValidationError(f"navigation {action!r} required_on references unknown route {source!r}")
             if (source, action) not in seen_navigation:
-                error(errors, f"required rendered {item['class']} navigation missing on {source!r}: {action!r}")
+                add_error(errors, f"required rendered {item['class']} navigation missing on {source!r}: {action!r}")
+
+    for action, item in resources.items():
+        for source in required_sources(item, routes, default_all=False):
+            if source not in by_id:
+                raise ValidationError(f"resource {action!r} required_on references unknown route {source!r}")
+            if (source, action) not in seen_resources:
+                add_error(errors, f"required rendered resource missing on {source!r}: {action!r}")
 
     for route in routes:
-        if route.required and not route.terminal and internal_outgoing[route.id] == 0:
-            error(errors, f"required non-terminal route/state {route.id!r} is a rendered dead end")
+        if route.required and not route.terminal and recovery_edges[route.id] == 0:
+            add_error(errors, f"required non-terminal route/state {route.id!r} is a rendered dead end")
 
     return {
         "schema": EVIDENCE_SCHEMA,
@@ -533,9 +610,11 @@ def validate(
         "route_count": len(routes),
         "expected_transition_count": len(transitions),
         "observed_edge_count": len(observed_edges),
+        "observed_resource_count": len(observed_resources),
         "observed_handoff_count": len(observed_handoffs),
         "browser_required_actions": sorted(browser_required, key=lambda v: (v["from"], v["action"], v["to"])),
         "observed_edges": sorted(observed_edges, key=lambda v: (v["from"], v["action"], v["to"])),
+        "internal_resources": sorted(observed_resources, key=lambda v: (v["from"], v["action"], v["path"])),
         "external_handoffs": sorted(observed_handoffs, key=lambda v: (v["from"], v["action"], v["url"])),
         "sitemap_routes": sorted(actual_sitemap),
         "warnings": sorted(warnings),
