@@ -29,7 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends curl squashfs-tools binutils
+          sudo apt-get install -y --no-install-recommends curl squashfs-tools binutils binutils-mips-linux-gnu
 
       - name: Download and verify exact official firmware
         id: firmware
