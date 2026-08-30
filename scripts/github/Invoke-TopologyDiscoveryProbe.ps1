@@ -123,14 +123,12 @@ if ($RunPublicInventory) {
 
     # gh-stats supports a dry-run specifically intended to estimate collection/API behavior.
     if (($probeResults | Where-Object { $_.command -eq 'stats' }).installed) {
-        Invoke-GhCapture \
-            -Arguments @('stats', '--org', $PublicOrganization, '--dry-run') \
-            -OutputPath (Join-Path $OutputDirectory "gh-stats-$PublicOrganization-dry-run.txt") \
-            -AllowFailure | Out-Null
+        Invoke-GhCapture -Arguments @('stats', '--org', $PublicOrganization, '--dry-run') -OutputPath (Join-Path $OutputDirectory "gh-stats-$PublicOrganization-dry-run.txt") -AllowFailure | Out-Null
     }
 
-    # gh-repo-stats is retained as the simpler migration-inventory baseline.
-    # Help output is always captured first because option names can evolve between versions.
+    # Other collectors are deliberately not invoked until their captured help/output contracts
+    # are reviewed. This prevents a future extension behavior change from expanding collection
+    # unexpectedly under a broadly authenticated local gh session.
     Write-Host 'Public inventory execution beyond gh-stats dry-run is intentionally not automated yet.'
     Write-Host 'Review captured help/contracts before adding collector-specific invocation.'
 }
