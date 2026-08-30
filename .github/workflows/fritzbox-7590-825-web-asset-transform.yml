@@ -21,7 +21,9 @@ jobs:
       FW_NAME: FRITZ.Box_7590-08.25.image
       FW_SHA256: 267ef427337d2141736ad6ed5d9389722a6a1234dd590bb7d4ebf11a00616c0d
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
 
       - name: Install extraction tools
         run: |
@@ -125,7 +127,7 @@ jobs:
           find "$work/report" -type f -printf '%P\t%s\n' | sort
 
       - name: Upload sanitized derived evidence only
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: fritzbox-7590-8.25-web-asset-transform
           path: ${{ runner.temp }}/fritz-web-transform/report/
