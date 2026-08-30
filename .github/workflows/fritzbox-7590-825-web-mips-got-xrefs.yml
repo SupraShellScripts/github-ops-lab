@@ -26,12 +26,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install extraction tools
+      - name: Install extraction and MIPS analysis tools
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends curl file squashfs-tools binutils
+          sudo apt-get install -y --no-install-recommends \
+            curl file squashfs-tools binutils \
+            binutils-mips-linux-gnu binutils-mipsel-linux-gnu
 
       - name: Download and verify exact official firmware
         id: firmware
