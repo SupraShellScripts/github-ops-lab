@@ -1,0 +1,16 @@
+{
+  "name": "github-ops-lab-public-site-readiness-selftest",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "site:build": "node ./scripts/build.mjs",
+    "site:validate": "node ./scripts/validate.mjs",
+    "site:test": "playwright test",
+    "site:lighthouse": "lhci autorun"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@lhci/cli": "0.15.1",
+    "@playwright/test": "1.62.1"
+  }
+}
