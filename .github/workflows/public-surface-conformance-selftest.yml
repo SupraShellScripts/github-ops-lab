@@ -1,0 +1,31 @@
+name: Public surface conformance self-test
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/public-web/validate-surface-contract.py'
+      - 'tests/public-surface-conformance-selftest.py'
+      - 'docs/public-surface-conformance.md'
+      - '.github/workflows/public-surface-conformance-selftest.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/public-web/validate-surface-contract.py'
+      - 'tests/public-surface-conformance-selftest.py'
+      - 'docs/public-surface-conformance.md'
+      - '.github/workflows/public-surface-conformance-selftest.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Run positive and negative validator fixtures
+        run: python3 ./tests/public-surface-conformance-selftest.py

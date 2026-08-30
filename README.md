@@ -38,6 +38,14 @@ A synthetic consumer in `tests/fixtures/public-site-readiness/` exercises the re
 
 See [`docs/public-site-release-readiness.md`](docs/public-site-release-readiness.md) for the consumer contract, base-path containment requirement, accessibility boundary, and pinned-use example.
 
+## Public-surface model and discovery conformance
+
+`scripts/public-web/validate-surface-contract.py` provides the cheap deterministic validation layer for a consumer-owned public-surface model. It checks model reachability, rendered action classification, GitHub Pages base-path containment, canonical/title/indexability consistency, sitemap/`lastmod`, `robots.txt`, approved external handoffs, and machine-description discovery without executing JavaScript or replacing project-owned Playwright journeys.
+
+The validator is dependency-free, read-only, reproducible from exact inputs, repeatable by a fresh actor, reversible by virtue of making no mutation, and idempotent on unchanged inputs. Its positive/negative fixtures run in `.github/workflows/public-surface-conformance-selftest.yml`.
+
+See [`docs/public-surface-conformance.md`](docs/public-surface-conformance.md) for the normalized `public-surface-contract/1` shape, semantic HTML identifiers, evidence format, and consumer boundary. Bridge and VanillaCord adoption are tracked separately so project route/journey semantics remain local.
+
 ## GitHub Pages source configuration
 
 `scripts/github/Set-GitHubPagesWorkflow.ps1` idempotently configures one explicitly named **public** repository so **Settings > Pages > Source** uses **GitHub Actions**. It does not create or alter the target repository's Pages deployment workflow.
