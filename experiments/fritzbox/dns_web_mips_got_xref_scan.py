@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Recover sanitized MIPS GOT-mediated callsites for the FRITZ Web replacement seam.
 
-The prior generic objdump symbolic-reference pass found zero direct callsites despite exact
-firmware dynamic-symbol evidence that libcmapi consumes the target imports. This pass is an
-architecture-aware follow-up for MIPS PIC code. It resolves allowlisted import GOT entries
-from ELF/MIPS metadata, matches gp-relative loads into t9, and associates subsequent jalr t9
-sites with those imports. Raw disassembly is ephemeral and never written to output.
+The prior generic symbolic-reference pass found zero direct callsites despite exact firmware
+dynamic-symbol evidence that libcmapi consumes the target imports. A first GOT-aware pass
+recovered the expected MIPS GOT slots but failed to prove that the host objdump decoded any
+MIPS instructions. This corrected pass selects an endian-appropriate MIPS cross-objdump,
+fails closed if instruction decoding is absent, then resolves allowlisted import GOT entries,
+matches gp-relative loads into t9, and associates a bounded subsequent jalr t9 with those
+imports. Raw disassembly is ephemeral and never written to output.
 """
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ import hashlib
 import json
 import pathlib
 import re
+import shutil
 import subprocess
 from collections import defaultdict
 
@@ -47,6 +50,7 @@ SYM_RE = re.compile(
     r"^\s*(\d+):\s+([0-9a-fA-F]+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+?)\s*$"
 )
 MACHINE_RE = re.compile(r"^\s*Machine:\s*(.+?)\s*$", re.MULTILINE)
+DATA_RE = re.compile(r"^\s*Data:\s*(.+?)\s*$", re.MULTILINE)
 CANONICAL_GP_RE = re.compile(r"Canonical gp value:\s*([0-9a-fA-F]+)", re.IGNORECASE)
 GOT_SYMBOL_LINE_RE = re.compile(
     r"^\s*([0-9a-fA-F]+)\s+(-?\d+)\(gp\)\s+([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+(\S+)\s+(\S+)\s+(.+?)\s*$"
@@ -66,19 +70,34 @@ def run_text(args: list[str], timeout: int = 120) -> str:
         cp = subprocess.run(
             args,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             text=True,
             errors="replace",
             check=False,
             timeout=timeout,
         )
-        return cp.stdout
     except (OSError, subprocess.TimeoutExpired):
         return ""
+    return cp.stdout
 
 
 def normalized_symbol(name: str) -> str:
     return name.strip().split("@", 1)[0]
+
+
+def select_mips_objdump(header: str) -> str:
+    data_match = DATA_RE.search(header)
+    data = data_match.group(1).lower() if data_match else ""
+    if "little endian" in data:
+        candidate = "mipsel-linux-gnu-objdump"
+    elif "big endian" in data:
+        candidate = "mips-linux-gnu-objdump"
+    else:
+        raise RuntimeError(f"cannot determine MIPS ELF endianness from readelf header: {data!r}")
+    resolved = shutil.which(candidate)
+    if not resolved:
+        raise RuntimeError(f"required cross-disassembler not found: {candidate}")
+    return resolved
 
 
 def parse_functions(symbol_text: str) -> list[dict]:
@@ -165,7 +184,11 @@ def parse_instructions(disassembly: str) -> list[dict]:
             address = int(address_hex, 16)
         except ValueError:
             continue
-        rows.append({"address": address, "asm": asm.strip()})
+        asm = asm.strip()
+        # Ignore section labels/data dumps accidentally matching the loose line form.
+        if not asm or asm.startswith("<"):
+            continue
+        rows.append({"address": address, "asm": asm})
     return rows
 
 
@@ -180,12 +203,12 @@ def recover_calls(instructions: list[dict], got_by_offset: dict[int, dict], func
         if target is None:
             continue
 
-        # In o32 MIPS PIC, the callee address is conventionally loaded into t9 from
-        # the GOT and then reached by jalr t9. Keep the window small and stop if t9
-        # is overwritten before the indirect call.
+        # o32 MIPS PIC conventionally loads the imported callee into t9 from the
+        # GOT, prepares arguments, and reaches it with jalr t9. Keep the window
+        # bounded and stop if t9 is overwritten first.
         callsite = None
         distance_instructions = None
-        for j in range(i + 1, min(i + 9, len(instructions))):
+        for j in range(i + 1, min(i + 17, len(instructions))):
             candidate = instructions[j]
             asm = candidate["asm"]
             if JALR_T9_RE.search(asm):
@@ -241,6 +264,8 @@ def scan(root: pathlib.Path, output: pathlib.Path) -> None:
     calls_by_file: dict[str, list[dict]] = {}
     got_by_file: dict[str, dict[int, dict]] = {}
     gp_by_file: dict[str, int | None] = {}
+    disassembler_by_file: dict[str, str] = {}
+    instruction_counts: dict[str, int] = {}
 
     for relative in TARGETS:
         path = root / relative
@@ -252,18 +277,36 @@ def scan(root: pathlib.Path, output: pathlib.Path) -> None:
         header = run_text(["readelf", "-hW", str(path)])
         symbol_text = run_text(["readelf", "-Ws", str(path)])
         readelf_all = run_text(["readelf", "-aW", str(path)])
-        disassembly = run_text(["objdump", "-dw", str(path)])
         machine_match = MACHINE_RE.search(header)
         machine = machine_match.group(1).strip() if machine_match else "unknown"
+        objdump = select_mips_objdump(header)
+        disassembly = run_text([objdump, "-dw", str(path)])
         functions = parse_functions(symbol_text)
         canonical_gp, got_map = parse_mips_got(readelf_all)
         instructions = parse_instructions(disassembly)
+        if len(instructions) < 100:
+            raise RuntimeError(
+                f"cross-disassembly produced too few instructions for {relative}: "
+                f"tool={pathlib.Path(objdump).name}, count={len(instructions)}"
+            )
         calls = recover_calls(instructions, got_map, functions)
 
         gp_by_file[relative] = canonical_gp
         got_by_file[relative] = got_map
         calls_by_file[relative] = calls
-        file_rows.append((relative, len(data), digest, machine, format_hex(canonical_gp), len(got_map), len(calls)))
+        disassembler_by_file[relative] = pathlib.Path(objdump).name
+        instruction_counts[relative] = len(instructions)
+        file_rows.append((
+            relative,
+            len(data),
+            digest,
+            machine,
+            pathlib.Path(objdump).name,
+            len(instructions),
+            format_hex(canonical_gp),
+            len(got_map),
+            len(calls),
+        ))
 
         for fn in functions:
             if fn["name"] in TARGET_FUNCTIONS:
@@ -325,9 +368,7 @@ def scan(root: pathlib.Path, output: pathlib.Path) -> None:
             ],
         }
 
-    bounded_regions = sorted({
-        c["owner"] for c in processing_calls if c["owner"] != "<unresolved>"
-    })
+    bounded_regions = sorted({c["owner"] for c in processing_calls if c["owner"] != "<unresolved>"})
     unresolved_processing = sum(1 for c in processing_calls if c["owner"] == "<unresolved>")
     decomp_eligible = bool(
         all_setters_in_init and processing_calls and len(bounded_regions) <= 2 and unresolved_processing == 0
@@ -335,7 +376,10 @@ def scan(root: pathlib.Path, output: pathlib.Path) -> None:
 
     write_tsv(
         output / "mips-got-elf-files.tsv",
-        ("file", "bytes", "sha256", "machine", "canonical_gp", "focus_got_entries", "recovered_focus_calls"),
+        (
+            "file", "bytes", "sha256", "machine", "disassembler", "decoded_instructions",
+            "canonical_gp", "focus_got_entries", "recovered_focus_calls"
+        ),
         sorted(file_rows),
     )
     write_tsv(
@@ -359,12 +403,17 @@ def scan(root: pathlib.Path, output: pathlib.Path) -> None:
     )
 
     summary = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "purpose": "probe-informed-mips-got-mediated-web-replacement-call-recovery",
         "targetsRequested": list(TARGETS),
         "targetsObserved": len(file_rows),
         "missingTargets": missing,
         "architectureTechnique": "MIPS PIC global-GOT gp-relative t9 load followed by jalr t9",
+        "disassembly": {
+            "tools": disassembler_by_file,
+            "decodedInstructionCounts": instruction_counts,
+            "failClosedMinimumInstructionsPerTarget": 100,
+        },
         "canonicalGpRecovered": {k: format_hex(v) for k, v in gp_by_file.items()},
         "focusGotEntries": {
             k: [
@@ -402,14 +451,14 @@ def scan(root: pathlib.Path, output: pathlib.Path) -> None:
         },
         "limitations": [
             "Recovered callsites are static MIPS PIC patterns and do not prove runtime execution for a specific HTTP request.",
-            "The load-to-jalr matcher is intentionally bounded to a short window and may miss more complex compiler sequences.",
+            "The load-to-jalr matcher is intentionally bounded and may miss more complex compiler sequences.",
             "Containing exported-function ownership is asserted only for callsites inside a defined nonzero symbol range.",
             "Raw disassembly and firmware binary payloads are not retained.",
             "This pass does not prove that replacement processing caused the observed dnsserver.js byte difference.",
             "Static evidence does not authorize router mutation."
         ],
         "nextGate": (
-            "If the callback registration is owned by init_webserver and replacement consumers reduce to one or two bounded "
+            "If callback registration is owned by init_webserver and replacement consumers reduce to one or two bounded "
             "regions relevant to form semantics, decompile only those regions; otherwise stop or choose the smallest architecture-specific refinement."
         ),
     }
@@ -418,6 +467,7 @@ def scan(root: pathlib.Path, output: pathlib.Path) -> None:
         handle.write("# FRITZ MIPS GOT-mediated Web callback scan\n\n")
         handle.write("Probe-informed exact-firmware static evidence.\n\n")
         handle.write(f"- targetsObserved: {summary['targetsObserved']}\n")
+        handle.write(f"- libcmapiDecodedInstructions: {instruction_counts.get(CMAPI, 0)}\n")
         handle.write(f"- allThreeSetterCallsRecoveredInLibcmapi: {str(all_setters_recovered).lower()}\n")
         handle.write(f"- allThreeSetterCallsProvablyInsideInitWebserver: {str(all_setters_in_init).lower()}\n")
         handle.write(f"- processingConsumerCallsites: {len(processing_calls)}\n")
