@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/public-site-readiness.yml'
       - '.github/workflows/public-site-readiness-selftest.yml'
+      - 'scripts/public-web/static-hci-playwright.mjs'
       - 'tests/fixtures/public-site-readiness/**'
       - 'docs/public-site-release-readiness.md'
       - 'README.md'
@@ -14,6 +15,7 @@ on:
     paths:
       - '.github/workflows/public-site-readiness.yml'
       - '.github/workflows/public-site-readiness-selftest.yml'
+      - 'scripts/public-web/static-hci-playwright.mjs'
       - 'tests/fixtures/public-site-readiness/**'
       - 'docs/public-site-release-readiness.md'
       - 'README.md'
