@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/fritzbox-7590-825-dns-state-machine.yml'
       - 'experiments/fritzbox/dns_state_machine_scan.py'
+      - 'experiments/fritzbox/dns_convergence_scan.py'
   workflow_dispatch:
 
 permissions:
@@ -106,6 +107,21 @@ jobs:
           head -n 120 "$work/report/dns/ui-controls.tsv"
           echo '--- guard signatures ---'
           head -n 120 "$work/report/dns/guard-signatures.tsv"
+
+      - name: Derive focused DNS UI/API convergence candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          work='${{ steps.firmware.outputs.work }}'
+          root="$(cat "$work/root-path.txt")"
+          python experiments/fritzbox/dns_convergence_scan.py "$root" --output "$work/report/convergence"
+          cat "$work/report/convergence/convergence-summary.md"
+          echo '--- convergence anchor hits ---'
+          head -n 160 "$work/report/convergence/convergence-anchor-hits.tsv"
+          echo '--- implementation path candidates ---'
+          head -n 120 "$work/report/convergence/convergence-path-candidates.tsv"
+          echo '--- multi-category co-occurrence ---'
+          head -n 120 "$work/report/convergence/convergence-cooccurrence.tsv"
 
       - name: Delete proprietary payloads and verify report boundary
         shell: bash
