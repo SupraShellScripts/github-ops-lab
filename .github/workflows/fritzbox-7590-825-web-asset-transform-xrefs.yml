@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/fritzbox-7590-825-web-asset-transform-xrefs.yml'
       - 'experiments/fritzbox/dns_web_asset_transform_xrefs.py'
+      - 'experiments/fritzbox/dns_web_asset_transform_stub_got.py'
   workflow_dispatch:
 
 permissions:
@@ -104,7 +105,7 @@ jobs:
           set -euo pipefail
           work='${{ steps.firmware.outputs.work }}'
           root="$(cat "$work/root-path.txt")"
-          python3 experiments/fritzbox/dns_web_asset_transform_xrefs.py "$root" --output "$work/report/replacement-xrefs"
+          python3 experiments/fritzbox/dns_web_asset_transform_stub_got.py "$root" --output "$work/report/replacement-xrefs"
 
       - name: Delete proprietary payloads and verify report boundary
         shell: bash
