@@ -47,11 +47,14 @@ class SurfaceConformanceTests(unittest.TestCase):
             ],
             "discovery": {
                 "sitemap": "sitemap.xml",
-                "robots": "robots.txt",
+                "robots": {
+                    "mode": "origin-external",
+                    "url": "https://example.org/robots.txt",
+                },
                 "machine_description": "surface.json",
             },
         }
-        self.contract_path.write_text(json.dumps(self.contract), encoding="utf-8")
+        self.write_contract()
         (self.site / "surface.json").write_text("{}\n", encoding="utf-8")
         (self.site / "index.html").write_text(
             """<!doctype html><html><head>
@@ -97,6 +100,9 @@ class SurfaceConformanceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
+    def write_contract(self) -> None:
+        self.contract_path.write_text(json.dumps(self.contract), encoding="utf-8")
+
     def validate(self, navigation_base=None):
         return module.validate(self.contract_path, self.site, navigation_base)
 
@@ -106,6 +112,8 @@ class SurfaceConformanceTests(unittest.TestCase):
         self.assertEqual([], evidence["errors"])
         self.assertEqual(1, evidence["expected_transition_count"])
         self.assertEqual(1, evidence["observed_resource_count"])
+        self.assertEqual("origin-external", evidence["robots"]["mode"])
+        self.assertEqual("deferred-live", evidence["robots"]["verification"])
 
     def test_project_base_path_escape_fails(self) -> None:
         path = self.site / "index.html"
@@ -179,6 +187,32 @@ class SurfaceConformanceTests(unittest.TestCase):
         evidence = self.validate()
         self.assertEqual("fail", evidence["verdict"])
         self.assertTrue(any("required rendered resource missing" in e for e in evidence["errors"]))
+
+    def test_local_robots_is_rejected_for_subpath_surface(self) -> None:
+        self.contract["discovery"]["robots"] = {"mode": "local", "path": "robots.txt"}
+        self.write_contract()
+        evidence = self.validate()
+        self.assertEqual("fail", evidence["verdict"])
+        self.assertTrue(any("local robots.txt is invalid for a subpath-hosted production surface" in e for e in evidence["errors"]))
+
+    def test_origin_root_surface_can_validate_local_robots(self) -> None:
+        self.contract["production_base_url"] = "https://example.org/"
+        self.contract["discovery"]["robots"] = {"mode": "local", "path": "robots.txt"}
+        self.write_contract()
+
+        index = self.site / "index.html"
+        index.write_text(index.read_text().replace("https://example.org/project/", "https://example.org/"), encoding="utf-8")
+        use = self.site / "use" / "index.html"
+        use.write_text(use.read_text().replace("https://example.org/project/use/", "https://example.org/use/"), encoding="utf-8")
+        sitemap = self.site / "sitemap.xml"
+        sitemap.write_text(sitemap.read_text().replace("https://example.org/project/", "https://example.org/"), encoding="utf-8")
+        robots = self.site / "robots.txt"
+        robots.write_text("User-agent: *\nAllow: /\n\nSitemap: https://example.org/sitemap.xml\n", encoding="utf-8")
+
+        evidence = self.validate()
+        self.assertEqual("pass", evidence["verdict"])
+        self.assertEqual("local", evidence["robots"]["mode"])
+        self.assertEqual("candidate", evidence["robots"]["verification"])
 
 
 if __name__ == "__main__":
