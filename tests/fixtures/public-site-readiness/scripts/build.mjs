@@ -13,15 +13,18 @@ const shell = ({ title, heading, body, current }) => `<!doctype html>
   <meta name="theme-color" content="#ffffff" data-effective-theme="light">
   <title>${title}</title>
   <style>
-    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; scroll-behavior: smooth; }
     body { margin: 0; line-height: 1.5; }
     .skip { position: absolute; left: .5rem; top: -4rem; padding: .75rem; background: Canvas; color: CanvasText; }
     .skip:focus { top: .5rem; }
     header, main, footer { max-width: 60rem; margin: auto; padding: 1rem; }
     nav { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
-    a, select { min-height: 2rem; }
+    nav a, a.hci-primary { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; gap: .4rem; }
+    select { min-width: 44px; min-height: 44px; }
     main:focus { outline: 2px solid currentColor; outline-offset: 2px; }
     pre { overflow-x: auto; }
+    .hci-focus-scroll-spacer { min-height: 56rem; }
+    .hci-icon { width: 1rem; height: 1rem; flex: none; }
   </style>
 </head>
 <body>
@@ -68,12 +71,17 @@ fs.writeFileSync(path.join(out, 'index.html'), shell({
   title: 'Public-site readiness self-test',
   heading: 'Public-site readiness self-test',
   current: 'home',
-  body: '<p>This synthetic candidate proves the reusable release-readiness workflow without project-specific product behavior.</p><p><a href="./accessibility/">Review accessibility notes</a></p>'
+  body: `<p>This synthetic candidate proves the reusable release-readiness workflow without project-specific product behavior.</p>
+    <div class="hci-focus-scroll-spacer" aria-hidden="true"></div>
+    <p><a class="hci-primary" href="./accessibility/">
+      <svg class="hci-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h12M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      <span>Review accessibility notes</span>
+    </a></p>`
 }));
 
 fs.writeFileSync(path.join(out, 'accessibility', 'index.html'), shell({
   title: 'Accessibility - public-site readiness self-test',
   heading: 'Accessibility',
   current: 'accessibility',
-  body: '<p>Automated checks are evidence, not certification. Manual accessibility review remains a consumer responsibility.</p>'
+  body: '<p>Automated checks are evidence, not certification. Manual accessibility review may still be appropriate when a consumer workset explicitly requires it.</p>'
 }));
