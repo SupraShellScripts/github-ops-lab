@@ -14,6 +14,7 @@ import hashlib
 import json
 import pathlib
 import re
+import shutil
 import subprocess
 
 CMAPI = "lib/libcmapi.so"
@@ -83,14 +84,21 @@ def symbol_table(path: pathlib.Path) -> dict[str, dict[str, object]]:
             "visibility": visibility,
             "ndx": ndx,
         }
-        # Prefer a definition over an undefined dynamic-symbol duplicate.
         if name not in out or (out[name]["ndx"] == "UND" and ndx != "UND"):
             out[name] = record
     return out
 
 
-def relocs_for_function(path: pathlib.Path, function: str) -> list[dict[str, object]]:
-    text = run(["objdump", "-drw", f"--disassemble={function}", str(path)])
+def find_objdump() -> str:
+    for candidate in ("mips-linux-gnu-objdump", "mipsel-linux-gnu-objdump"):
+        path = shutil.which(candidate)
+        if path:
+            return path
+    raise RuntimeError("MIPS cross-objdump not found")
+
+
+def relocs_for_function(objdump: str, path: pathlib.Path, function: str) -> list[dict[str, object]]:
+    text = run([objdump, "-drw", f"--disassemble={function}", str(path)])
     rows = []
     for line in text.splitlines():
         m = RELOC_RE.match(line)
@@ -124,16 +132,15 @@ def main() -> int:
         if not p.is_file():
             raise SystemExit(f"required exact-firmware target missing: {p}")
 
+    objdump = find_objdump()
     cm_symbols = symbol_table(cmapi)
     repl_symbols = symbol_table(replacement)
     if PRIMARY_FUNCTION not in cm_symbols or cm_symbols[PRIMARY_FUNCTION]["ndx"] == "UND":
         raise SystemExit("init_webserver definition not found")
 
-    init_relocs = relocs_for_function(cmapi, PRIMARY_FUNCTION)
+    init_relocs = relocs_for_function(objdump, cmapi, PRIMARY_FUNCTION)
     focus_relocs = [r for r in init_relocs if r["symbol"] in FOCUS]
 
-    # MIPS PIC code normally leaves dynamic-symbol relocations near the load/call sites.
-    # For each setter, look only 0x100 bytes backwards for callback-symbol references.
     contexts = []
     expected_confirmed = 0
     for setter in SETTERS:
@@ -159,10 +166,7 @@ def main() -> int:
 
     hypothesis = "confirmed" if expected_confirmed == 3 and len(contexts) == 3 else "not-confirmed"
 
-    # Second-function budget: characterize only replacement_processing by its dynamic
-    # relocation/call vocabulary. This is used only to distinguish a real processing seam
-    # from a dead/unrelated exported symbol, without publishing disassembly.
-    processing_relocs = relocs_for_function(replacement, "replacement_processing")
+    processing_relocs = relocs_for_function(objdump, replacement, "replacement_processing")
     processing_symbols = sorted({str(r["symbol"]) for r in processing_relocs})
 
     write_tsv(
@@ -196,6 +200,7 @@ def main() -> int:
         "scope": "FRITZ!Box 7590 / FRITZ!OS 8.25 exact firmware",
         "primaryFunction": PRIMARY_FUNCTION,
         "nativeObjectsObserved": 2,
+        "disassembler": pathlib.Path(objdump).name,
         "fullDisassemblyRetained": False,
         "initWebserverSize": int(cm_symbols[PRIMARY_FUNCTION]["size"]),
         "focusRelocationCount": len(focus_relocs),
@@ -216,6 +221,7 @@ def main() -> int:
         "# FRITZ Web replacement callback xref result\n\n"
         f"- primaryFunction: `{PRIMARY_FUNCTION}` ({summary['initWebserverSize']} bytes)\n"
         f"- nativeObjectsObserved: {summary['nativeObjectsObserved']}\n"
+        f"- disassembler: `{summary['disassembler']}`\n"
         f"- setterCallsiteCount: {summary['setterCallsiteCount']}\n"
         f"- expectedSetterCallbackPairsSeen: {summary['expectedSetterCallbackPairsSeen']}/3\n"
         f"- registrationHypothesis: **{summary['registrationHypothesis']}**\n"
