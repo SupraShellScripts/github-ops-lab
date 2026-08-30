@@ -11,6 +11,7 @@ The consumer repository owns:
 - route/state identities;
 - critical flow transitions;
 - global/utility navigation actions;
+- same-site machine/resource endpoints exposed as links;
 - approved external handoffs;
 - indexability decisions;
 - canonical production base URL;
@@ -76,6 +77,18 @@ Minimal example:
       "action": "nav-home",
       "class": "global",
       "to": "home"
+    },
+    {
+      "action": "skip-main",
+      "class": "utility",
+      "to": "$self"
+    }
+  ],
+  "resources": [
+    {
+      "action": "machine-project",
+      "path": "/surface.json",
+      "required_on": ["home"]
     }
   ],
   "handoffs": [
@@ -134,7 +147,7 @@ Pass that ephemeral candidate identity with:
 --navigation-base http://127.0.0.1:4173/
 ```
 
-The validator uses the production base for canonical/Sitemap/robots checks and the navigation base for rendered internal-link containment and route resolution. This separation prevents a correct candidate from being rejected merely because it is being tested before publication.
+The validator uses the production base for canonical/Sitemap/robots checks and the navigation base for rendered internal-link/resource containment and route resolution. This separation prevents a correct candidate from being rejected merely because it is being tested before publication.
 
 ### Rendered state/action identifiers
 
@@ -159,11 +172,14 @@ Every rendered anchor with an `href` and every rendered button is expected to ha
 A rendered action must resolve to exactly one class:
 
 - `transitions` — a declared flow edge from one route/state to another;
-- `navigation` with class `global` or `utility`;
+- `navigation` — global or utility human navigation;
+- `resources` — same-site machine/resource endpoints such as `project.json`, `stable.json`, or other linked deterministic interfaces;
 - `handoffs` — approved external exits/references;
 - `exceptions` — narrow documented exceptions with a reason.
 
 A link/action that is rendered but unclassified fails validation.
+
+#### Navigation and `$self`
 
 By default, each declared `navigation` action is required on every required route. A project can narrow that requirement:
 
@@ -182,7 +198,41 @@ or mark the navigation declaration as classification-only:
 "required_on": false
 ```
 
-Required non-terminal routes must also render at least one valid internal transition/navigation action, so a declared recovery concept cannot hide a real rendered dead end.
+Utility links that remain on the current route, such as a skip link, use the special target `$self`:
+
+```json
+{
+  "action": "skip-main",
+  "class": "utility",
+  "to": "$self"
+}
+```
+
+A `$self` utility link proves the utility action exists, but it does **not** satisfy the recovery requirement for a non-terminal route. Required non-terminal routes must render at least one valid internal transition/navigation edge to another route/state.
+
+#### Same-site machine resources
+
+Machine/resource links are intentionally not modeled as human route states merely because they are clickable. Declare an exact project-relative path:
+
+```json
+{
+  "action": "machine-project",
+  "path": "/project.json"
+}
+```
+
+or a project-relative prefix:
+
+```json
+{
+  "action": "machine-release-data",
+  "path_prefix": "/releases/"
+}
+```
+
+`resources` are classification-only by default. Use `required_on` when a particular human route is contractually required to expose that machine interface.
+
+This distinction prevents ordinary machine endpoints from being mislabeled as exceptions and keeps the human flow graph focused on human states and journeys.
 
 ### Browser-required actions
 
@@ -234,13 +284,13 @@ This is intentionally conservative. Crawler-specific policies remain project-own
 
 ### machine-description discovery
 
-When `discovery.machine_description` is declared, each rendered route must advertise it with a `describedby` relation, for example:
+When `discovery.machine_description` is declared, the candidate must contain that machine-description resource and each rendered human route must advertise it with a `describedby` relation, for example:
 
 ```html
 <link rel="describedby" href="../surface.json">
 ```
 
-The validator resolves the link against the route canonical URL.
+The validator resolves the relation against the route's production canonical URL.
 
 ## External handoffs
 
@@ -266,7 +316,7 @@ or a prefix:
 
 When `handoff` is declared, rendered HTML must also expose the matching `data-surface-handoff` value.
 
-The validator rejects a declared internal action that exits the candidate site and a declared external handoff that unexpectedly stays on the candidate origin.
+The validator rejects a declared internal action/resource that exits the candidate site and a declared external handoff that unexpectedly stays on the candidate origin.
 
 ## Usage
 
@@ -295,7 +345,8 @@ It records:
 - contract schema;
 - production canonical base URL and candidate navigation base URL;
 - route and expected-transition counts;
-- observed classified edges;
+- observed classified human edges;
+- observed same-site machine/resources;
 - browser-required actions;
 - approved observed external handoffs;
 - sitemap route inventory;
@@ -320,6 +371,7 @@ Any later production mutation such as IndexNow notification should remain a sepa
 This validator does not:
 
 - decide project routes or critical journeys;
+- turn every linked machine endpoint into a human flow state;
 - infer actions from CSS/pixel position/visible copy;
 - execute JavaScript;
 - certify WCAG compliance;
