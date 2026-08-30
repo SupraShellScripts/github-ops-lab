@@ -30,6 +30,14 @@ Pull-request and push validation is non-mutating and uses minimal `GITHUB_TOKEN`
 
 Stable reusable tooling should graduate to its durable public home rather than turning this lab into a product repository.
 
+## Reusable public-site release readiness
+
+`.github/workflows/public-site-readiness.yml` extracts the common public-web CI mechanics proven by the SupraCraft VanillaCord and Bridge pilots. Consumers keep their own candidate generator, deterministic checks, Playwright routes/journeys, theme assertions, Lighthouse routes/budgets, and Lychee paths; the reusable workflow supplies the shared pinned execution mechanics and evidence upload.
+
+A synthetic consumer in `tests/fixtures/public-site-readiness/` exercises the reusable workflow through `.github/workflows/public-site-readiness-selftest.yml`.
+
+See [`docs/public-site-release-readiness.md`](docs/public-site-release-readiness.md) for the consumer contract, base-path containment requirement, accessibility boundary, and pinned-use example.
+
 ## GitHub Pages source configuration
 
 `scripts/github/Set-GitHubPagesWorkflow.ps1` idempotently configures one explicitly named **public** repository so **Settings > Pages > Source** uses **GitHub Actions**. It does not create or alter the target repository's Pages deployment workflow.
