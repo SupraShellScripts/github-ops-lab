@@ -475,14 +475,15 @@ def validate(contract_path: Path, site_dir: Path, navigation_base_url: str | Non
             warnings.append(f"{route.id}: non-indexable route does not explicitly declare noindex")
 
         if machine_rel:
+            parsed_machine = urlparse(machine_rel)
             expected_machine = (
-                urljoin(canonical, machine_rel)
-                if machine_rel.startswith(".")
-                else urljoin(production_base, machine_rel)
+                machine_rel
+                if parsed_machine.scheme
+                else urljoin(navigation_base, machine_rel.lstrip("/"))
             )
-            resolved = {urljoin(canonical, href) for href in page.describedby}
+            resolved = {urljoin(candidate_page, href) for href in page.describedby}
             if expected_machine not in resolved:
-                add_error(errors, f"{route.id}: missing rel=describedby link to {expected_machine}")
+                add_error(errors, f"{route.id}: missing rel=describedby link to candidate machine description {expected_machine}")
 
         for rendered in page.actions:
             action, href, tag = rendered["action"], rendered["href"], rendered["tag"]
