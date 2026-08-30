@@ -5,13 +5,11 @@ on:
   push:
     paths:
       - 'scripts/github/Invoke-TopologyDiscoveryProbe.ps1'
-      - 'scripts/github/Invoke-TopologyDiscoveryPilot.ps1'
       - 'docs/topology-migration-discovery.md'
       - '.github/workflows/topology-discovery-tooling-selftest.yml'
   pull_request:
     paths:
       - 'scripts/github/Invoke-TopologyDiscoveryProbe.ps1'
-      - 'scripts/github/Invoke-TopologyDiscoveryPilot.ps1'
       - 'docs/topology-migration-discovery.md'
       - '.github/workflows/topology-discovery-tooling-selftest.yml'
 
@@ -53,24 +51,20 @@ jobs:
           install_extension mona-actions/gh-stats
           install_extension mona-actions/gh-repo-map
 
-      - name: Parse discovery scripts
+      - name: Parse public discovery probe
         shell: pwsh
         run: |
-          foreach ($script in @(
-            './scripts/github/Invoke-TopologyDiscoveryProbe.ps1',
-            './scripts/github/Invoke-TopologyDiscoveryPilot.ps1'
-          )) {
-            $tokens = $null
-            $errors = $null
-            [void][System.Management.Automation.Language.Parser]::ParseFile(
-              (Resolve-Path $script),
-              [ref]$tokens,
-              [ref]$errors
-            )
-            if ($errors.Count -gt 0) {
-              $errors | ForEach-Object { Write-Error "${script}: $($_.Message)" }
-              exit 1
-            }
+          $script = './scripts/github/Invoke-TopologyDiscoveryProbe.ps1'
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error "${script}: $($_.Message)" }
+            exit 1
           }
 
       - name: Probe extensions and gh-stats dry-run against public org
@@ -105,5 +99,4 @@ jobs:
             }
           }
 
-      # Deliberately no artifact upload: even this public-only self-test establishes
-      # the invariant that collector output remains local unless explicitly sanitized.
+      # Deliberately no artifact upload. Public-only collector output remains ephemeral.
