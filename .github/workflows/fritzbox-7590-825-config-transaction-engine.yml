@@ -1,0 +1,99 @@
+name: FRITZ!Box 7590 8.25 configuration transaction scan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/fritzbox-7590-825-config-transaction-engine.yml'
+      - 'experiments/fritzbox/config_transaction_scan.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FW_URL: https://download.avm.de/fritzbox/fritzbox-7590/deutschland/fritz.os/FRITZ.Box_7590-08.25.image
+      FW_NAME: FRITZ.Box_7590-08.25.image
+      FW_SHA256: 267ef427337d2141736ad6ed5d9389722a6a1234dd590bb7d4ebf11a00616c0d
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install analysis tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends curl binutils squashfs-tools
+      - name: Download and verify exact firmware
+        id: fw
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/fritz-config-engine"
+          mkdir -p "$work/payload" "$work/roots" "$work/report"
+          fw="$work/$FW_NAME"
+          curl --fail --location --retry 4 --retry-all-errors --silent --show-error "$FW_URL" -o "$fw"
+          actual="$(sha256sum "$fw" | awk '{print $1}')"
+          test "$actual" = "$FW_SHA256"
+          printf 'source\t%s\nsha256\t%s\nbytes\t%s\n' "$FW_URL" "$actual" "$(stat -c '%s' "$fw")" > "$work/report/provenance.tsv"
+          echo "work=$work" >> "$GITHUB_OUTPUT"
+      - name: Extract stock filesystem read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          work='${{ steps.fw.outputs.work }}'
+          tar -xf "$work/$FW_NAME" -C "$work/payload"
+          python3 - "$work" <<'PY'
+          import pathlib,sys
+          w=pathlib.Path(sys.argv[1]); rows=[]
+          for p in (w/'payload').rglob('*'):
+              if not p.is_file() or p.stat().st_size < 4096: continue
+              try: data=p.read_bytes()
+              except OSError: continue
+              start=0
+              while True:
+                  off=data.find(b'hsqs',start)
+                  if off<0: break
+                  rows.append((str(p.relative_to(w/'payload')),off)); start=off+4
+          with (w/'squashfs.tsv').open('w') as f:
+              for rel,off in rows: f.write(f'{rel}\t{off}\n')
+          PY
+          n=0
+          while IFS=$'\t' read -r rel off; do
+            [ -n "${rel:-}" ] || continue
+            n=$((n+1)); img="$work/squashfs-$n.img"
+            dd if="$work/payload/$rel" of="$img" bs=1 skip="$off" status=none
+            if ! unsquashfs -d "$work/roots/root-$n" "$img" >/dev/null 2>&1; then rm -rf "$work/roots/root-$n"; fi
+            rm -f "$img"
+          done < "$work/squashfs.tsv"
+          root="$(find "$work/roots" -type f -path '*/usr/bin/ctlmgr' -printf '%h\n' -quit)"
+          root="${root%/usr/bin}"
+          [ -n "$root" ] && [ -d "$root/usr" ]
+          printf '%s' "$root" > "$work/root-path.txt"
+      - name: Derive sanitized transaction-engine map
+        shell: bash
+        run: |
+          set -euo pipefail
+          work='${{ steps.fw.outputs.work }}'; root="$(cat "$work/root-path.txt")"
+          python experiments/fritzbox/config_transaction_scan.py "$root" --output "$work/report/engine"
+          cat "$work/report/engine/summary.md"
+          echo '--- focus files ---'; head -n 120 "$work/report/engine/focus-files.tsv"
+          echo '--- calls ---'; head -n 160 "$work/report/engine/call-identifiers.tsv"
+          echo '--- symbols ---'; head -n 160 "$work/report/engine/elf-symbols.tsv"
+      - name: Delete proprietary payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          work='${{ steps.fw.outputs.work }}'
+          rm -f "$work/$FW_NAME" "$work/root-path.txt" "$work/squashfs.tsv"
+          rm -rf "$work/payload" "$work/roots"
+          test ! -e "$work/$FW_NAME"
+          if find "$work/report" -type f -size +2M -print -quit | grep -q .; then exit 1; fi
+      - name: Upload derived evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: fritzbox-7590-8.25-config-transaction-engine
+          path: ${{ runner.temp }}/fritz-config-engine/report/
+          if-no-files-found: error
+          retention-days: 7
