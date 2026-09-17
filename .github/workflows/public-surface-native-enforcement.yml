@@ -1,0 +1,51 @@
+name: Public surface native enforcement
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Apply drift instead of observe-only'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-surface-native-enforcement
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    env:
+      PUBLIC_SURFACE_POLICY_JSON: ${{ secrets.PUBLIC_SURFACE_POLICY_JSON }}
+      PUBLIC_SURFACE_ADMIN_TOKEN: ${{ secrets.PUBLIC_SURFACE_ADMIN_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Validate policy shape
+        run: >-
+          python3 ./scripts/github/reconcile-public-surface.py
+          --policy-env PUBLIC_SURFACE_POLICY_JSON
+          --validate-only
+
+      - name: Reconcile scheduled policy
+        if: github.event_name == 'schedule'
+        run: >-
+          python3 ./scripts/github/reconcile-public-surface.py
+          --policy-env PUBLIC_SURFACE_POLICY_JSON
+          --apply
+
+      - name: Reconcile manual policy
+        if: github.event_name == 'workflow_dispatch'
+        run: >-
+          python3 ./scripts/github/reconcile-public-surface.py
+          --policy-env PUBLIC_SURFACE_POLICY_JSON
+          ${{ inputs.apply && '--apply' || '' }}
