@@ -87,7 +87,9 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./scripts/github/Repair-UpstreamForks.ps1 -AuditOnly
+        # VanillaCord is now an independent repository rather than a GitHub fork.
+        # Keep the fork-maintenance audit bound to repositories that still claim fork semantics.
+        run: ./scripts/github/Repair-UpstreamForks.ps1 -AuditOnly -Fork SupraCraft/Bridge,SemperSupra/OpenXcom
 
   pages-helper-audit:
     name: Pages helper read-only audit
