@@ -87,7 +87,9 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./scripts/github/Repair-UpstreamForks.ps1 -AuditOnly
+        # VanillaCord and Bridge are now independent repositories. OpenXcom remains
+        # a GitHub fork, so keep this invariant audit only where fork semantics exist.
+        run: ./scripts/github/Repair-UpstreamForks.ps1 -AuditOnly -Fork SemperSupra/OpenXcom
 
   pages-helper-audit:
     name: Pages helper read-only audit
