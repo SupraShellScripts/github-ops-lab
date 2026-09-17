@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Reconcile GitHub-native interaction settings for public deployment surfaces.
 
-Estate-specific target policy is supplied at runtime. This tool deliberately does not
-own repository inventory, discovery, scheduling, or private-to-public provenance.
+Estate-specific target policy is supplied at runtime. This tool deliberately owns
+only repository-setting drift. It does not own work intake, planning, scheduling,
+executor/provider selection, assignments, dependencies, attempts, or acceptance.
+Those orchestration semantics belong outside this reconciler.
 """
 from __future__ import annotations
 
@@ -18,6 +20,8 @@ from typing import Any
 API = "https://api.github.com"
 API_VERSION = "2026-03-10"
 VALID_MODES = {"deploy", "runner"}
+TOP_LEVEL_KEYS = {"schema", "targets"}
+TARGET_KEYS = {"repository", "mode", "enabled"}
 
 
 class PolicyError(ValueError):
@@ -56,6 +60,9 @@ def parse_policy(raw: str) -> list[Target]:
         raise PolicyError(f"invalid JSON: {exc}") from exc
     if not isinstance(doc, dict) or doc.get("schema") != "public-surface-policy/1":
         raise PolicyError("policy schema must be public-surface-policy/1")
+    unknown_top = set(doc) - TOP_LEVEL_KEYS
+    if unknown_top:
+        raise PolicyError("unsupported top-level policy field(s)")
     items = doc.get("targets")
     if not isinstance(items, list):
         raise PolicyError("targets must be an array")
@@ -64,6 +71,9 @@ def parse_policy(raw: str) -> list[Target]:
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             raise PolicyError(f"target {index} must be an object")
+        unknown_target = set(item) - TARGET_KEYS
+        if unknown_target:
+            raise PolicyError(f"target {index} contains unsupported field(s)")
         repo = item.get("repository")
         mode = item.get("mode")
         enabled = item.get("enabled", False)
