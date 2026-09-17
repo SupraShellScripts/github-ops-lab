@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,6 +10,7 @@ MODULE = ROOT / "scripts" / "github" / "reconcile-public-surface.py"
 spec = importlib.util.spec_from_file_location("reconciler", MODULE)
 assert spec and spec.loader
 mod = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = mod
 spec.loader.exec_module(mod)
 
 policy = mod.parse_policy('{"schema":"public-surface-policy/1","targets":[{"repository":"example/deploy","mode":"deploy","enabled":true},{"repository":"example/runner","mode":"runner","enabled":false}]}')
