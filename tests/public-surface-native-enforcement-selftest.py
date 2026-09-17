@@ -34,11 +34,11 @@ for bad in [
     '{"schema":"public-surface-policy/1","targets":{}}',
     '{"schema":"public-surface-policy/1","targets":[{"repository":"bad","mode":"deploy","enabled":true}]}',
     '{"schema":"public-surface-policy/1","targets":[{"repository":"a/b","mode":"other","enabled":true}]}',
-    # Scope guard: work-dispatch/orchestration semantics do not belong here.
+    # Scope guard: work-orchestration semantics do not belong in this policy.
     '{"schema":"public-surface-policy/1","schedule":"hourly","targets":[]}',
     '{"schema":"public-surface-policy/1","targets":[{"repository":"a/b","mode":"runner","enabled":true,"task":"do-work"}]}',
-    '{"schema":"public-surface-policy/1","targets":[{"repository":"a/b","mode":"runner","enabled":true,"executor":"jules"}]}',
-    '{"schema":"public-surface-policy/1","targets":[{"repository":"a/b","mode":"runner","enabled":true,"provider":"actions"}]}',
+    '{"schema":"public-surface-policy/1","targets":[{"repository":"a/b","mode":"runner","enabled":true,"executor":"example"}]}',
+    '{"schema":"public-surface-policy/1","targets":[{"repository":"a/b","mode":"runner","enabled":true,"provider":"example"}]}',
     '{"schema":"public-surface-policy/1","targets":[{"repository":"a/b","mode":"runner","enabled":true,"dependency":"x"}]}',
 ]:
     try:
