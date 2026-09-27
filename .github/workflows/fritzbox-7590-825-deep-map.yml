@@ -1,0 +1,134 @@
+name: FRITZ!Box 7590 8.25 deep structural map
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/fritzbox-7590-825-deep-map.yml'
+      - 'experiments/fritzbox/deep_map.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      FW_URL: https://download.avm.de/fritzbox/fritzbox-7590/deutschland/fritz.os/FRITZ.Box_7590-08.25.image
+      FW_NAME: FRITZ.Box_7590-08.25.image
+      EXPECTED_SIZE: '42393600'
+      EXPECTED_SHA256: 267ef427337d2141736ad6ed5d9389722a6a1234dd590bb7d4ebf11a00616c0d
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install read-only analysis tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            curl file binutils squashfs-tools p7zip-full xz-utils zstd ripgrep jq
+
+      - name: Download and verify exact firmware
+        id: firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/fritz-deep"
+          mkdir -p "$work/payload" "$work/roots" "$work/report"
+          fw="$work/$FW_NAME"
+          curl --fail --location --retry 4 --retry-all-errors --silent --show-error "$FW_URL" -o "$fw"
+          test "$(stat -c '%s' "$fw")" = "$EXPECTED_SIZE"
+          sha="$(sha256sum "$fw" | awk '{print $1}')"
+          test "$sha" = "$EXPECTED_SHA256"
+          echo "work=$work" >> "$GITHUB_OUTPUT"
+          {
+            echo '# Deep-map provenance'
+            echo
+            echo "- URL: $FW_URL"
+            echo "- File: $FW_NAME"
+            echo "- Bytes: $EXPECTED_SIZE"
+            echo "- SHA-256: $sha"
+            echo "- Analysis script commit: $GITHUB_SHA"
+          } > "$work/report/provenance.md"
+
+      - name: Extract firmware and embedded SquashFS
+        shell: bash
+        env:
+          WORK: ${{ steps.firmware.outputs.work }}
+        run: |
+          set -euo pipefail
+          fw="$WORK/$FW_NAME"
+          tar -tf "$fw" > "$WORK/report/outer-files.txt"
+          tar -xf "$fw" -C "$WORK/payload"
+          python3 - "$WORK" <<'PY'
+          import pathlib, sys
+          work = pathlib.Path(sys.argv[1])
+          rows=[]
+          for p in (work/'payload').rglob('*'):
+              if not p.is_file() or p.stat().st_size < 4096:
+                  continue
+              data=p.read_bytes()
+              pos=0
+              while True:
+                  off=data.find(b'hsqs', pos)
+                  if off < 0: break
+                  rows.append((p, off))
+                  pos=off+4
+          with (work/'report'/'squashfs-candidates.tsv').open('w') as f:
+              for p,off in rows:
+                  f.write(f"{p.relative_to(work/'payload')}\t{off}\n")
+          PY
+          n=0
+          while IFS=$'\t' read -r rel off; do
+            [ -n "${rel:-}" ] || continue
+            n=$((n+1))
+            dd if="$WORK/payload/$rel" of="$WORK/squash-$n.img" bs=1 skip="$off" status=none
+            if unsquashfs -d "$WORK/roots/root-$n" "$WORK/squash-$n.img" >"$WORK/report/unsquash-$n.txt" 2>&1; then
+              printf '%s\t%s\t%s\n' "$n" "$rel" "$off" >> "$WORK/report/extracted-roots.tsv"
+            else
+              rm -rf "$WORK/roots/root-$n"
+            fi
+            rm -f "$WORK/squash-$n.img"
+          done < "$WORK/report/squashfs-candidates.tsv"
+          test -d "$WORK/roots/root-1"
+
+      - name: Map binaries, services, persistence, and Web control plane
+        shell: bash
+        env:
+          WORK: ${{ steps.firmware.outputs.work }}
+        run: |
+          set -euo pipefail
+          python3 experiments/fritzbox/deep_map.py "$WORK/roots/root-1" "$WORK/report/deep"
+          cat "$WORK/report/deep/summary.md"
+
+      - name: Validate sanitized report boundary
+        shell: bash
+        env:
+          WORK: ${{ steps.firmware.outputs.work }}
+        run: |
+          set -euo pipefail
+          # Reports must remain small and text/JSON/TSV only.
+          find "$WORK/report" -type f -printf '%P\t%s\n' | sort
+          if find "$WORK/report" -type f -size +5M -print -quit | grep -q .; then
+            echo 'Unexpectedly large report; refusing upload.' >&2
+            exit 1
+          fi
+          if find "$WORK/report" -type f ! \( -name '*.md' -o -name '*.txt' -o -name '*.tsv' -o -name '*.json' \) -print -quit | grep -q .; then
+            echo 'Unexpected report file type; refusing upload.' >&2
+            exit 1
+          fi
+          # Proprietary payloads are explicitly removed before upload.
+          rm -f "$WORK/$FW_NAME"
+          rm -rf "$WORK/payload" "$WORK/roots"
+
+      - name: Upload sanitized deep map
+        uses: actions/upload-artifact@v4
+        with:
+          name: fritzbox-7590-8.25-deep-map
+          path: ${{ steps.firmware.outputs.work }}/report/
+          if-no-files-found: error
+          retention-days: 7
