@@ -30,6 +30,30 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Observe runner capacity independently of source completeness
+        run: |
+          python3 - <<'PY'
+          import json, os, platform, shutil
+          disk = shutil.disk_usage(os.environ['RUNNER_TEMP'])
+          report = {
+            'stage': 'RUNNER_PREFLIGHT_OBSERVED',
+            'machine': platform.machine(),
+            'os': platform.platform(),
+            'cpus': os.cpu_count(),
+            'disk_total_bytes': disk.total,
+            'disk_free_bytes': disk.free,
+            'quartus_sh_present': bool(shutil.which('quartus_sh')),
+            'compile_executed': False,
+            'timing_qualified': False,
+            'hardware_observed': False,
+          }
+          p = os.path.join(os.environ['RUNNER_TEMP'], 'quartus25-preflight.json')
+          with open(p, 'w', encoding='utf-8') as output:
+              json.dump(report, output, sort_keys=True, indent=2)
+          print(json.dumps(report, sort_keys=True, indent=2))
+          PY
+          echo 'Runner preflight observed; no Quartus compile, vendor EULA or private input.' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Static contracts and negative tests
         run: |
           python3 -m unittest discover -s tests -p 'test_quartus25_public_pilot.py' -v
@@ -59,6 +83,7 @@ jobs:
         with:
           name: quartus25-public-pilot
           path: |
+            ${{ runner.temp }}/quartus25-preflight.json
             ${{ runner.temp }}/quartus25-source-contract.json
             ${{ runner.temp }}/quartus25-runner-probe.json
             ${{ runner.temp }}/quartus25-iverilog-result.txt
