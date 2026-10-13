@@ -83,7 +83,7 @@ class TarAdmission(unittest.TestCase):
         self.fixtures(member="../setup.sh")
         result, rc = self.run_observe()
         self.assertEqual(rc, 3)
-        self.assertEqual(result["tar_metadata"]["unsafe_member_count"], 1)
+        self.assertEqual(result["manifest"]["unsafe_member_count"], 1)
 
     def test_symlink_tar_member_not_admitted(self):
         self.fixtures(member="setup.sh", member_type=tarfile.SYMTYPE)
