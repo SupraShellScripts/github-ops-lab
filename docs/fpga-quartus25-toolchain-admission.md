@@ -47,3 +47,50 @@ Native public runner with `quartus_sh` absent, 13/13 Python tests and original I
 https://github.com/SupraShellScripts/github-ops-lab/actions/runs/38348849325
 
 Independent Yosys generic synthesis and stand-alone Icarus simulations PASS. Native Quartus install/map/fit/TimeQuest, Zephyr paired images and physical hardware testing **NOT RUN**.
+
+## Operator acquisition and one-shot installation (HOLD until supplied)
+
+The production tool is *not* built from Quartus source. The supported path installs official Altera-distributed binaries. These steps are for a trusted Linux x86_64 actor with an isolated disposable workspace, not for an anonymous public PR runner, and do not transfer vendor binaries into GitHub.
+
+1. Sign in via the [official Altera Lite 25.1 Linux download page](https://www.altera.com/downloads/fpga-development-tools/quartus-prime-lite-edition-design-software-version-25-1-linux) using your own MyAltera account. Download **both** `QuartusLiteSetup-25.1std.0.1129-linux.run` and `cyclone-25.1std.0.1129.qdz`. Do not send credentials, session cookies, or signed URLs to a public repository.
+2. Review Altera's actual license terms before installation. The [official installer guide](https://www.intel.com/content/www/us/en/docs/programmable/683472/25-1/command-line-options.html) says unattended installation requires `--accept_eula 1`, an explicit acceptance by the operator. A source test cannot substitute for that authority.
+3. Place the two original files together in a **private directory outside the checkout**; do not rename, modify, mirror or upload them to source, public artifacts, GHCR, or shared logs. The following commands are examples that do not accept the EULA or start installation:
+
+```sh
+sha1sum /private/path/quartus25-archives/QuartusLiteSetup-25.1std.0.1129-linux.run
+sha1sum /private/path/quartus25-archives/cyclone-25.1std.0.1129.qdz
+python3 scripts/fpga/quartus25_vendor_install.py inspect \
+  --archives /private/path/quartus25-archives \
+  --destination /scratch/quartus25-lite
+```
+
+An inspect success returns `ARCHIVES_VERIFIED_EULA_PENDING` with both SHA256 digests, the vendor SHA1 matches, available scratch capacity and no side effect on the destination. Anything else is a stop gate; missing or altered archive bytes never count as a compiler failure.
+
+4. **Only after the operator has accepted the vendor's EULA** and explicitly chooses to perform an installation, the actor can execute:
+
+```sh
+python3 scripts/fpga/quartus25_vendor_install.py install \
+  --archives /private/path/quartus25-archives \
+  --destination /scratch/quartus25-lite \
+  --accept-altera-eula
+```
+
+The program invokes the standalone installer with the documented unattended options, then tests `quartus_sh --version`. Successful output is `TOOL_IDENTITY_VERIFIED_DEVICE_UNCHECKED`, **not** a device-enumeration, fitting or STA claim. Even after successful installation the Cyclone IV package and part availability must be established through a genuine compile; vendor packaging behavior has not yet been qualified on the runner.
+
+5. For a new isolated build-output directory, invoke the existing original public fixture:
+
+```sh
+export PATH="/scratch/quartus25-lite/quartus/bin:$PATH"
+python3 scripts/fpga/quartus25_public_pilot.py compile \
+  --root fixtures/fpga/quartus25-minimal \
+  --out-dir /scratch/original-cycloneiv-compile \
+  --timeout 900
+```
+
+The wrapper fails closed on a non-Lite/non-25.1std Build 1129 edition or absent `.sof`. **A genuine .sof with native compiler exit zero still does not qualify TimeQuest clocks, setup/hold, unconstrained I/O or hardware.** Inspect native reports separately. Only remove owned scratch artifacts; treat failed partial installer state as uncertain until independently examined.
+
+**Public-runners policy:** no official package is downloaded by the automatic public PR workflows. If a future owner authorizes a credential-safe ephemeral vendor-delivery mechanism, design and independently qualify that access path first; never put a reusable vendor-auth token, temporary signed URL, vendor installer layer, or EULA assent inside pull-request-controlled public workflow inputs.
+
+## Local-file admission self-test evidence
+
+The standalone source-only admission script `scripts/fpga/quartus25_vendor_install.py` has an independent, pinned public workflow `.github/workflows/quartus25-vendor-admission-selftest.yml`. Tests use mocked digest checks and sparse fixture files; **no Altera bytes** are downloaded, executed, or published. A passing suite validates only the stated admission behavior, not official installation or compliance with the actual vendor license terms.
