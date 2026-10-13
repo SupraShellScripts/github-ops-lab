@@ -86,13 +86,15 @@ class ArchiveGate(unittest.TestCase):
 
     def test_disk_shortage_rejected(self):
         self.fake_files()
-        with mock.patch.object(m.shutil, "disk_usage", return_value=mock.Mock(free=1)):
-            result, rc = m.observe(self.source, self.dest, self.matching_hashes)
+        result, rc = m.observe(self.source, self.dest, self.matching_hashes,
+                               disk_fn=lambda _: mock.Mock(free=1))
         self.assertEqual(rc, 3)
         self.assertEqual(result["stage"], "CAPACITY_BLOCKED")
 
     def test_no_explicit_eula_never_invokes_installer(self):
-        approved = {"stage": "ARCHIVES_VERIFIED_EULA_PENDING", "eula_accepted_by_tool": False}
+        approved = {"stage": "ARCHIVES_VERIFIED_EULA_PENDING", "eula_accepted_by_tool": False,
+                    "compiler_executed": False, "fit": "NOT_RUN",
+                    "timequest": "NOT_RUN", "hil": "NOT_RUN"}
         with mock.patch.object(m, "observe", return_value=(approved, 0)):
             with mock.patch.object(m.subprocess, "run") as runner:
                 result, rc = m.install(self.source, self.dest, approve=False)
@@ -101,7 +103,9 @@ class ArchiveGate(unittest.TestCase):
         runner.assert_not_called()
 
     def test_failed_installer_is_not_success(self):
-        approved = {"stage": "ARCHIVES_VERIFIED_EULA_PENDING", "eula_accepted_by_tool": False}
+        approved = {"stage": "ARCHIVES_VERIFIED_EULA_PENDING", "eula_accepted_by_tool": False,
+                    "compiler_executed": False, "fit": "NOT_RUN",
+                    "timequest": "NOT_RUN", "hil": "NOT_RUN"}
         with mock.patch.object(m, "observe", return_value=(approved, 0)):
             with mock.patch.object(m.subprocess, "run", return_value=mock.Mock(returncode=5, stdout="", stderr="failure")) as run:
                 result, rc = m.install(self.source, self.dest, approve=True)
@@ -111,7 +115,9 @@ class ArchiveGate(unittest.TestCase):
         self.assertEqual(run.call_args.args[0][0], str((self.source / m.FILES[0][0]).resolve()))
 
     def test_mocked_install_wrong_edition_fails(self):
-        approved = {"stage": "ARCHIVES_VERIFIED_EULA_PENDING", "eula_accepted_by_tool": False}
+        approved = {"stage": "ARCHIVES_VERIFIED_EULA_PENDING", "eula_accepted_by_tool": False,
+                    "compiler_executed": False, "fit": "NOT_RUN",
+                    "timequest": "NOT_RUN", "hil": "NOT_RUN"}
         tool = self.dest / "quartus" / "bin" / "quartus_sh"
         def fake_run(command, **kwargs):
             if "--installdir" in command:
