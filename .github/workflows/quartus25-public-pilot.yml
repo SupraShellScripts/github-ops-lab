@@ -1,0 +1,91 @@
+name: Quartus 25.1 public-safe Cyclone IV pilot
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/quartus25-public-pilot.yml'
+      - 'scripts/fpga/quartus25_public_pilot.py'
+      - 'tests/test_quartus25_public_pilot.py'
+      - 'fixtures/fpga/quartus25-minimal/**'
+      - 'docs/fpga-quartus25-public-pilot.md'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/quartus25-public-pilot.yml'
+      - 'scripts/fpga/quartus25_public_pilot.py'
+      - 'tests/test_quartus25_public_pilot.py'
+      - 'fixtures/fpga/quartus25-minimal/**'
+      - 'docs/fpga-quartus25-public-pilot.md'
+
+permissions:
+  contents: read
+
+jobs:
+  source-and-runner:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout public fixture only
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Observe runner capacity independently of source completeness
+        run: |
+          python3 - <<'PY'
+          import json, os, platform, shutil
+          disk = shutil.disk_usage(os.environ['RUNNER_TEMP'])
+          report = {
+            'stage': 'RUNNER_PREFLIGHT_OBSERVED',
+            'machine': platform.machine(),
+            'os': platform.platform(),
+            'cpus': os.cpu_count(),
+            'disk_total_bytes': disk.total,
+            'disk_free_bytes': disk.free,
+            'quartus_sh_present': bool(shutil.which('quartus_sh')),
+            'compile_executed': False,
+            'timing_qualified': False,
+            'hardware_observed': False,
+          }
+          p = os.path.join(os.environ['RUNNER_TEMP'], 'quartus25-preflight.json')
+          with open(p, 'w', encoding='utf-8') as output:
+              json.dump(report, output, sort_keys=True, indent=2)
+          print(json.dumps(report, sort_keys=True, indent=2))
+          PY
+          echo 'Runner preflight observed; no Quartus compile, vendor EULA or private input.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Static contracts and negative tests
+        run: |
+          python3 -m unittest discover -s tests -p 'test_quartus25_public_pilot.py' -v
+          python3 -m py_compile scripts/fpga/quartus25_public_pilot.py
+          python3 scripts/fpga/quartus25_public_pilot.py check --root fixtures/fpga/quartus25-minimal > "$RUNNER_TEMP/quartus25-source-contract.json"
+
+      - name: Observe actual runner and installed tool identity
+        run: |
+          python3 scripts/fpga/quartus25_public_pilot.py probe --root fixtures/fpga/quartus25-minimal > "$RUNNER_TEMP/quartus25-runner-probe.json"
+          cat "$RUNNER_TEMP/quartus25-runner-probe.json"
+          echo "Public Quartus pilot source/runner only; Quartus compile NOT RUN." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Exercise original synthetic RTL using Icarus Verilog
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends iverilog
+          iverilog -g2012 -s synthetic_top_tb -o "$RUNNER_TEMP/quartus25-synthetic-tb" \
+            fixtures/fpga/quartus25-minimal/synthetic_top.v \
+            fixtures/fpga/quartus25-minimal/synthetic_top_tb.v
+          vvp "$RUNNER_TEMP/quartus25-synthetic-tb" | tee "$RUNNER_TEMP/quartus25-iverilog-result.txt"
+          grep -Fx 'SIM_PASS original synthetic counter' "$RUNNER_TEMP/quartus25-iverilog-result.txt"
+          echo 'Icarus simulation PASS; no Quartus, STA, Zephyr or HIL claim.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain public-safe receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quartus25-public-pilot
+          path: |
+            ${{ runner.temp }}/quartus25-preflight.json
+            ${{ runner.temp }}/quartus25-source-contract.json
+            ${{ runner.temp }}/quartus25-runner-probe.json
+            ${{ runner.temp }}/quartus25-iverilog-result.txt
+          if-no-files-found: warn
+          retention-days: 3
