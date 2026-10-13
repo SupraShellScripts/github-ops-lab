@@ -99,6 +99,22 @@ def compile_quartus(root, outdir, timeout):
                 'quartus_executed': False, 'timing_qualified': False, 'hardware_observed': False}, 3
     if not 1 <= timeout <= 3600:
         raise ValueError('timeout must be 1..3600 seconds')
+    try:
+        identity = subprocess.run([tool, '--version'], capture_output=True,
+                                  text=True, timeout=20, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {'schema': source['schema'], 'stage': 'TOOL_IDENTITY_BLOCKED',
+                'reason': 'quartus_sh version probe failed: ' + type(exc).__name__,
+                'quartus_executed': False, 'timing_qualified': False,
+                'hardware_observed': False}, 3
+    observed_version = (identity.stdout + identity.stderr).strip()
+    required_identity = ('Version 25.1std.0 Build 1129', 'Lite Edition')
+    if identity.returncode != 0 or not all(term in observed_version for term in required_identity):
+        return {'schema': source['schema'], 'stage': 'TOOL_IDENTITY_BLOCKED',
+                'reason': 'expected Quartus Prime Lite 25.1std.0 Build 1129',
+                'observed_version_excerpt': observed_version[:500],
+                'quartus_executed': False, 'timing_qualified': False,
+                'hardware_observed': False}, 3
     outdir = Path(outdir)
     if outdir.exists() or outdir.is_symlink():
         raise ValueError('output directory must not yet exist')
@@ -129,6 +145,7 @@ def compile_quartus(root, outdir, timeout):
         verdict = 'COMPILE_ARTIFACT_OBSERVED' if p.returncode == 0 and has_sof else 'COMPILE_FAILED'
         result = {'schema': source['schema'], 'stage': verdict, 'quartus_executed': True,
                   'quartus_exit_code': p.returncode, 'sof_observed': has_sof,
+                  'quartus_version': observed_version[:500],
                   'report_paths': reports, 'generated_sha256': produced,
                   'source_sha256': source['source_sha256'],
                   # Never infer complete STA coverage from a success code or an .sta.rpt file.
