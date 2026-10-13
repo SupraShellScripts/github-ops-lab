@@ -71,6 +71,43 @@ class Contract(unittest.TestCase):
         self.assertEqual(result['stage'], 'ENVIRONMENT_BLOCKED')
         self.assertFalse(result['quartus_executed'])
 
+    def test_wrong_quartus_build_rejected_without_compiling(self):
+        observed = mock.Mock(returncode=0, stdout='Version 24.1std.0 Build 1077 Lite Edition',
+                             stderr='')
+        with mock.patch.object(m.shutil, 'which', return_value='/opt/q/quartus_sh'):
+            with mock.patch.object(m.subprocess, 'run', return_value=observed) as invoked:
+                result, rc = m.compile_quartus(self.root, Path(self.tmp.name) / 'wrong-build', 15)
+        self.assertEqual(rc, 3)
+        self.assertEqual(result['stage'], 'TOOL_IDENTITY_BLOCKED')
+        self.assertFalse(result['quartus_executed'])
+        self.assertEqual(invoked.call_count, 1)
+        self.assertFalse((Path(self.tmp.name) / 'wrong-build').exists())
+
+    def test_standard_edition_rejected_without_compiling(self):
+        observed = mock.Mock(returncode=0, stdout='Version 25.1std.0 Build 1129 Standard Edition',
+                             stderr='')
+        with mock.patch.object(m.shutil, 'which', return_value='/opt/q/quartus_sh'):
+            with mock.patch.object(m.subprocess, 'run', return_value=observed) as invoked:
+                result, rc = m.compile_quartus(self.root, Path(self.tmp.name) / 'wrong-edition', 15)
+        self.assertEqual(rc, 3)
+        self.assertEqual(result['stage'], 'TOOL_IDENTITY_BLOCKED')
+        self.assertFalse(result['quartus_executed'])
+        self.assertEqual(invoked.call_count, 1)
+
+    def test_matching_identity_compiles_but_missing_sof_fails(self):
+        identity = mock.Mock(returncode=0, stdout='Quartus Prime Shell\nVersion 25.1std.0 Build 1129 Lite Edition',
+                             stderr='')
+        compile_without_outputs = mock.Mock(returncode=0, stdout='no output generated', stderr='')
+        with mock.patch.object(m.shutil, 'which', return_value='/opt/q/quartus_sh'):
+            with mock.patch.object(m.subprocess, 'run', side_effect=[identity, compile_without_outputs]) as invoked:
+                result, rc = m.compile_quartus(self.root, Path(self.tmp.name) / 'empty-build', 15)
+        self.assertEqual(rc, 4)
+        self.assertEqual(result['stage'], 'COMPILE_FAILED')
+        self.assertTrue(result['quartus_executed'])
+        self.assertFalse(result['sof_observed'])
+        self.assertFalse(result['timing_qualified'])
+        self.assertEqual(invoked.call_count, 2)
+
     def test_probe_never_claims_build(self):
         with mock.patch.object(m.shutil, 'which', return_value=None):
             result = m.probe(self.root)
