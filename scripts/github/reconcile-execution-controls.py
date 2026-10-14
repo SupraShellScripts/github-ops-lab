@@ -221,6 +221,10 @@ def reviewer_update(current: dict, expected: list[str], branch_protected: bool):
 
 
 def reconcile(gh: Gh, policy: dict, apply: bool) -> list[dict]:
+    # Read ALL preconditions and stage EVERY operation before any mutation.
+    # An inaccessible environment or drifted reviewer list cannot cause a
+    # partial application that already changed unrelated repository settings.
+    staged = []
     outcomes = []
     for target in policy["repositories"]:
         repo = target["repository"]
@@ -228,15 +232,10 @@ def reconcile(gh: Gh, policy: dict, apply: bool) -> list[dict]:
         if before.get("archived") or before.get("disabled"):
             raise PolicyError("TARGET_REPOSITORY_NOT_ACTIVE")
         drift = before.get("allow_auto_merge") is not True
-        item = {"target": repo, "type": "auto_merge",
-                "state": "CHANGE_REQUIRED" if drift else "CONFORMANT"}
-        if drift and apply:
-            gh.change("PATCH", "repos/" + repo, {"allow_auto_merge": True})
-            after = gh.get("repos/" + repo)
-            if after.get("allow_auto_merge") is not True:
-                raise PolicyError("AUTO_MERGE_VERIFY_FAILED")
-            item["state"] = "VERIFIED"
-        outcomes.append(item)
+        outcomes.append({"target": repo, "type": "auto_merge",
+                         "state": "CHANGE_REQUIRED" if drift else "CONFORMANT"})
+        if drift:
+            staged.append(("PATCH", "repos/" + repo, {"allow_auto_merge": True}, len(outcomes)-1))
     for target in policy["environments"]:
         repo, name = target["repository"], target["name"]
         base = "repos/" + repo
@@ -246,18 +245,43 @@ def reconcile(gh: Gh, policy: dict, apply: bool) -> list[dict]:
             raise PolicyError("TARGET_REPOSITORY_NOT_ACTIVE")
         current_branch = gh.get(f"{base}/branches/{default}")
         env_path = f"{base}/environments/{name}"
-        current = gh.get(env_path)  # absent environment is NOT created
+        current = gh.get(env_path)  # nonexistent environment never auto-created
         proposed = reviewer_update(current, target["expected_reviewers"],
                                    current_branch.get("protected"))
-        item = {"target": repo + ":" + name, "type": "remove_reviewers",
-                "state": "CHANGE_REQUIRED" if proposed else "CONFORMANT"}
-        if proposed is not None and apply:
-            gh.change("PUT", env_path, proposed)
-            after = gh.get(env_path)
+        outcomes.append({"target": repo + ":" + name, "type": "remove_reviewers",
+                         "state": "CHANGE_REQUIRED" if proposed else "CONFORMANT"})
+        if proposed is not None:
+            staged.append(("PUT", env_path, proposed, len(outcomes)-1))
+    if not apply:
+        return outcomes
+
+    # The operator's explicit apply applies only this preflighted desired
+    # state. We re-read immediately before each write (race is denied).
+    for verb, path, payload, index in staged:
+        if verb == "PATCH":
+            before = gh.get(path)
+            if before.get("allow_auto_merge") is not False:
+                raise PolicyError("AUTO_MERGE_CONCURRENT_DRIFT")
+        else:
+            before = gh.get(path)
+            target = next(x for x in policy["environments"]
+                          if path.endswith("/environments/" + x["name"])
+                          and x["repository"] in path)
+            branch = gh.get("repos/" + target["repository"] + "/branches/" +
+                            gh.get("repos/" + target["repository"])["default_branch"])
+            recalculated = reviewer_update(before, target["expected_reviewers"],
+                                           branch.get("protected"))
+            if recalculated != payload:
+                raise PolicyError("ENVIRONMENT_CONCURRENT_DRIFT")
+        gh.change(verb, path, payload)
+        after = gh.get(path)
+        if verb == "PATCH":
+            if after.get("allow_auto_merge") is not True:
+                raise PolicyError("AUTO_MERGE_VERIFY_FAILED")
+        else:
             if reviewer_update(after, target["expected_reviewers"], True) is not None:
                 raise PolicyError("ENVIRONMENT_VERIFY_FAILED")
-            item["state"] = "VERIFIED"
-        outcomes.append(item)
+        outcomes[index]["state"] = "VERIFIED"
     return outcomes
 
 
@@ -300,7 +324,10 @@ def main(argv: list[str] | None = None, gh: Gh | None = None) -> int:
         names.update(x["repository"] for x in policy["repositories"])
         names.update(x["repository"] for x in policy["environments"])
     census = {name: safe_sample(name, gh) for name in sorted(names)}
-    accounts = {owner: app_summary(owner, gh) for owner in args.owners if owner != "__user__"}
+    current_user = get_safe(gh, "user")
+    account_login = (current_user["data"] or {}).get("login") if current_user["state"] == "READABLE" else None
+    accounts = {owner: app_summary("__user__" if owner == account_login else owner, gh)
+                for owner in args.owners}
     # Mutation happens only after a full current-state scan. Reconcile re-reads.
     changes = reconcile(gh, policy, apply=args.apply) if policy else []
     report = {"schema": SCHEMA, "accounts": owners,
