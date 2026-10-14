@@ -173,7 +173,7 @@ class ExecutionPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as base:
             dest=Path(base)/"AppData"/"Local"/"GitHubOps"
             with patch.object(m.subprocess,"run",
-                              return_value=SimpleNamespace(returncode=128,stdout="")),
+                              return_value=SimpleNamespace(returncode=128,stdout="")), \
                  patch.object(m.Path,"cwd",return_value=Path(base)):
                 result=m.output_path(str(dest))
             self.assertTrue(result.parent.is_dir())
