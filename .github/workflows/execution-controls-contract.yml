@@ -1,0 +1,31 @@
+name: GitHub Ops execution-control contract (no credentials)
+on:
+  pull_request:
+    paths:
+      - 'scripts/github/reconcile-execution-controls.py'
+      - 'tests/test-execution-controls.py'
+      - '.github/workflows/execution-controls-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Syntax and negative-control tests
+        run: |
+          python3 -m py_compile scripts/github/reconcile-execution-controls.py tests/test-execution-controls.py
+          python3 tests/test-execution-controls.py -v
+      - name: Reject unauthenticated mutation path
+        run: |
+          if python3 scripts/github/reconcile-execution-controls.py --apply 2>/dev/null; then
+            echo "Unexpected policy-free mutation entry accepted"
+            exit 2
+          fi
+          echo 'GITHUB_OPS_APPLY_WITHOUT_POLICY_DENIED'
