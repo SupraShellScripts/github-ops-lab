@@ -215,27 +215,60 @@ def reviewer_update(current: dict, expected: list[str], branch_protected: bool):
         actual.append(login.lower())
     if sorted(actual) != sorted(x.lower() for x in expected):
         raise PolicyError("REVIEWER_SET_DRIFT")
+    if current.get("wait_timer", 0) not in (0, None):
+        raise PolicyError("ENVIRONMENT_WAIT_TIMER_DRIFT")
+    prevent_self_review = current.get("prevent_self_review", False)
+    if type(prevent_self_review) is not bool:
+        raise PolicyError("ENVIRONMENT_SELF_REVIEW_POLICY_UNKNOWN")
     return {"wait_timer": 0, "reviewers": [],
+            "prevent_self_review": prevent_self_review,
             "deployment_branch_policy": {"protected_branches": True,
                                          "custom_branch_policies": False}}
 
 
-def reconcile(gh: Gh, policy: dict, apply: bool) -> list[dict]:
-    # Read ALL preconditions and stage EVERY operation before any mutation.
-    # An inaccessible environment or drifted reviewer list cannot cause a
-    # partial application that already changed unrelated repository settings.
+def environment_restore_payload(current: dict) -> dict:
+    """Locally retained rollback ingredients; never printed in stdout."""
+    rule = current["protection_rules"][0]
+    reviewers = []
+    for item in rule.get("reviewers", []):
+        reviewer = item.get("reviewer") or {}
+        identifier = reviewer.get("id")
+        kind = item.get("type")
+        if type(identifier) is not int or identifier <= 0 or kind not in ("User", "Team"):
+            raise PolicyError("REVIEWER_ROLLBACK_IDENTITY_UNVERIFIED")
+        reviewers.append({"type": kind, "id": identifier})
+    if not reviewers:
+        raise PolicyError("REVIEWER_ROLLBACK_LIST_EMPTY")
+    return {
+        "wait_timer": current.get("wait_timer", 0),
+        "reviewers": reviewers,
+        "prevent_self_review": current.get("prevent_self_review", False),
+        "deployment_branch_policy": dict(current["deployment_branch_policy"]),
+    }
+
+
+def reconcile(gh: Gh, policy: dict, apply: bool, checkpoint=None) -> list[dict]:
+    # Preflight every target BEFORE the first mutation, and persist recovery
+    # information before modifying anything. A partial GitHub API failure
+    # leaves a durable, sanitized private local recovery record.
     staged = []
     outcomes = []
+    recovery = []
     for target in policy["repositories"]:
         repo = target["repository"]
         before = gh.get("repos/" + repo)
         if before.get("archived") or before.get("disabled"):
             raise PolicyError("TARGET_REPOSITORY_NOT_ACTIVE")
-        drift = before.get("allow_auto_merge") is not True
+        current = before.get("allow_auto_merge")
+        if type(current) is not bool:
+            raise PolicyError("AUTO_MERGE_STATE_UNREADABLE")
+        drift = current is not True
         outcomes.append({"target": repo, "type": "auto_merge",
                          "state": "CHANGE_REQUIRED" if drift else "CONFORMANT"})
         if drift:
             staged.append(("PATCH", "repos/" + repo, {"allow_auto_merge": True}, len(outcomes)-1))
+            recovery.append({"target": repo, "type": "auto_merge",
+                             "previous": {"allow_auto_merge": current}})
     for target in policy["environments"]:
         repo, name = target["repository"], target["name"]
         base = "repos/" + repo
@@ -245,18 +278,26 @@ def reconcile(gh: Gh, policy: dict, apply: bool) -> list[dict]:
             raise PolicyError("TARGET_REPOSITORY_NOT_ACTIVE")
         current_branch = gh.get(f"{base}/branches/{default}")
         env_path = f"{base}/environments/{name}"
-        current = gh.get(env_path)  # nonexistent environment never auto-created
+        current = gh.get(env_path)  # absent environment is never created
         proposed = reviewer_update(current, target["expected_reviewers"],
                                    current_branch.get("protected"))
         outcomes.append({"target": repo + ":" + name, "type": "remove_reviewers",
                          "state": "CHANGE_REQUIRED" if proposed else "CONFORMANT"})
         if proposed is not None:
+            restore = environment_restore_payload(current)
             staged.append(("PUT", env_path, proposed, len(outcomes)-1))
+            recovery.append({"target": repo + ":" + name, "type": "remove_reviewers",
+                             "previous": restore})
     if not apply:
         return outcomes
+    if checkpoint is None:
+        # Programmatic callers must not mutate without a durable checkpoint.
+        raise PolicyError("APPLY_REQUIRES_DURABLE_CHECKPOINT")
+    checkpoint(outcomes, "PREFLIGHTED", recovery)
 
-    # The operator's explicit apply applies only this preflighted desired
-    # state. We re-read immediately before each write (race is denied).
+    # Re-read immediately before each update to reject races. Record the
+    # mutation even if GitHub responds success but subsequent verification
+    # becomes inaccessible, so a human or admitted reconciler can restore it.
     for verb, path, payload, index in staged:
         if verb == "PATCH":
             before = gh.get(path)
@@ -266,14 +307,19 @@ def reconcile(gh: Gh, policy: dict, apply: bool) -> list[dict]:
             before = gh.get(path)
             target = next(x for x in policy["environments"]
                           if path.endswith("/environments/" + x["name"])
-                          and x["repository"] in path)
+                          and path.startswith("repos/" + x["repository"] + "/"))
+            repo_info = gh.get("repos/" + target["repository"])
             branch = gh.get("repos/" + target["repository"] + "/branches/" +
-                            gh.get("repos/" + target["repository"])["default_branch"])
+                            repo_info["default_branch"])
             recalculated = reviewer_update(before, target["expected_reviewers"],
                                            branch.get("protected"))
-            if recalculated != payload:
+            if recalculated != payload or environment_restore_payload(before) != next(
+                    r["previous"] for r in recovery
+                    if r["target"] == target["repository"] + ":" + target["name"]):
                 raise PolicyError("ENVIRONMENT_CONCURRENT_DRIFT")
         gh.change(verb, path, payload)
+        outcomes[index]["state"] = "APPLIED_UNVERIFIED"
+        checkpoint(outcomes, "VERIFYING", recovery)
         after = gh.get(path)
         if verb == "PATCH":
             if after.get("allow_auto_merge") is not True:
@@ -282,15 +328,32 @@ def reconcile(gh: Gh, policy: dict, apply: bool) -> list[dict]:
             if reviewer_update(after, target["expected_reviewers"], True) is not None:
                 raise PolicyError("ENVIRONMENT_VERIFY_FAILED")
         outcomes[index]["state"] = "VERIFIED"
+        checkpoint(outcomes, "VERIFYING", recovery)
+    checkpoint(outcomes, "VERIFIED", recovery)
     return outcomes
 
 
 def output_path(path: str) -> Path:
     dest = Path(path).expanduser().resolve()
-    if dest == Path.cwd().resolve() or Path.cwd().resolve() in dest.parents:
-        raise PolicyError("PRIVATE_CENSUS_OUTPUT_WITHIN_WORKTREE")
+    # The operator commonly launches from a home directory. CWD is *not*
+    # necessarily a Git worktree: rejecting every descendant of CWD breaks
+    # safe default %LOCALAPPDATA% output. Check the actual current worktree.
+    git = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], text=True,
+        capture_output=True, check=False, timeout=10)
+    if git.returncode == 0 and git.stdout.strip():
+        worktree = Path(git.stdout.strip()).resolve()
+        if dest == worktree or worktree in dest.parents:
+            raise PolicyError("PRIVATE_CENSUS_OUTPUT_WITHIN_WORKTREE")
     dest.mkdir(mode=0o700, parents=True, exist_ok=True)
     return dest / "github-execution-controls.json"
+
+
+def write_report(destination: Path, report: dict):
+    """Atomic local receipt. Leave the last verified checkpoint on failure."""
+    temp = destination.with_suffix(".tmp")
+    temp.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    os.replace(temp, destination)
 
 
 def main(argv: list[str] | None = None, gh: Gh | None = None) -> int:
@@ -328,15 +391,27 @@ def main(argv: list[str] | None = None, gh: Gh | None = None) -> int:
     account_login = (current_user["data"] or {}).get("login") if current_user["state"] == "READABLE" else None
     accounts = {owner: app_summary("__user__" if owner == account_login else owner, gh)
                 for owner in args.owners}
-    # Mutation happens only after a full current-state scan. Reconcile re-reads.
-    changes = reconcile(gh, policy, apply=args.apply) if policy else []
+    # Even a partially accepted settings change must have a pre-change
+    # local recovery receipt. No private estate metadata enters stdout.
+    destination = output_path(args.output)
     report = {"schema": SCHEMA, "accounts": owners,
               "app_installations": accounts, "repositories": census,
-              "policy_changes": changes, "applied": bool(args.apply)}
-    destination = output_path(args.output)
-    temp = destination.with_suffix(".tmp")
-    temp.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-    os.replace(temp, destination)
+              "policy_changes": [], "phase": "DISCOVERED", "applied": False}
+    write_report(destination, report)
+
+    def checkpoint(outcomes, phase, recovery):
+        report["phase"] = phase
+        report["policy_changes"] = [dict(x) for x in outcomes]
+        report["recovery"] = recovery
+        report["applied"] = phase == "VERIFIED"
+        write_report(destination, report)
+
+    changes = reconcile(gh, policy, apply=args.apply,
+                        checkpoint=checkpoint if args.apply else None) if policy else []
+    if not args.apply:
+        report["policy_changes"] = changes
+        report["phase"] = "PLANNED"
+        write_report(destination, report)
     print(json.dumps({"schema": SCHEMA, "account_count": len(owners),
                       "deep_inspected_repos": len(census),
                       "changes": changes, "applied": bool(args.apply),
