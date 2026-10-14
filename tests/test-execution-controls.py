@@ -1,6 +1,8 @@
 """Offline tests: no GitHub token or estate settings are read/mutated."""
 import importlib.util
 import json
+import tempfile
+from types import SimpleNamespace
 from pathlib import Path
 import sys
 import unittest
@@ -25,7 +27,7 @@ def policy():
 def env(reviewers=("reviewer",), protection=None):
     if protection is None:
         protection = ([{"type":"required_reviewers",
-                        "reviewers":[{"type":"User","reviewer":{"login":x}} for x in reviewers]}]
+                        "reviewers":[{"type":"User","reviewer":{"login":x,"id":i+101}} for i,x in enumerate(reviewers)]}]
                       if reviewers else [])
     return {"deployment_branch_policy":{"protected_branches":True,
                                         "custom_branch_policies":False},
@@ -97,17 +99,92 @@ class ExecutionPolicyTests(unittest.TestCase):
         self.assertFalse(fake.changed)
     def test_apply_verified(self):
         fake=FakeGh()
-        result=m.reconcile(fake,policy(),apply=True)
+        checkpoints=[]
+        def save(outcomes, phase, recovery):
+            checkpoints.append((phase,json.loads(json.dumps(outcomes)),
+                                json.loads(json.dumps(recovery))))
+        result=m.reconcile(fake,policy(),apply=True,checkpoint=save)
         self.assertEqual([x["state"] for x in result],["VERIFIED","VERIFIED"])
         self.assertEqual([x[0] for x in fake.changed],["PATCH","PUT"])
         self.assertEqual(fake.environment["deployment_branch_policy"]["protected_branches"],True)
+        self.assertEqual(checkpoints[0][0],"PREFLIGHTED")
+        self.assertEqual(checkpoints[-1][0],"VERIFIED")
+        self.assertEqual(checkpoints[0][2][0]["previous"]["allow_auto_merge"],False)
+        self.assertEqual(checkpoints[0][2][1]["previous"]["reviewers"],
+                         [{"type":"User","id":101}])
+        self.assertTrue(any(x[1][0]["state"]=="APPLIED_UNVERIFIED" for x in checkpoints))
+
     def test_repeat_apply_idempotent(self):
         fake=FakeGh()
-        m.reconcile(fake,policy(),apply=True)
+        m.reconcile(fake,policy(),apply=True,checkpoint=lambda *args: None)
         fake.changed=[]
-        result=m.reconcile(fake,policy(),apply=True)
+        result=m.reconcile(fake,policy(),apply=True,checkpoint=lambda *args: None)
         self.assertEqual([x["state"] for x in result],["CONFORMANT","CONFORMANT"])
         self.assertFalse(fake.changed)
+
+    def test_no_apply_without_checkpoint(self):
+        fake=FakeGh()
+        with self.assertRaisesRegex(m.PolicyError,"APPLY_REQUIRES_DURABLE_CHECKPOINT"):
+            m.reconcile(fake,policy(),apply=True)
+        self.assertFalse(fake.changed)
+
+    def test_preflight_checkpoint_failure_causes_zero_mutation(self):
+        fake=FakeGh()
+        def failed(*args):
+            raise OSError("disk-full")
+        with self.assertRaises(OSError):
+            m.reconcile(fake,policy(),apply=True,checkpoint=failed)
+        self.assertFalse(fake.changed)
+
+    def test_partial_settings_update_retains_prechange_recovery(self):
+        class FailSecond(FakeGh):
+            def change(self, verb, path, payload):
+                if verb=="PUT":
+                    raise m.ApiError("HTTP_403")
+                return super().change(verb,path,payload)
+        fake=FailSecond()
+        checkpoints=[]
+        def save(outcomes,phase,recovery):
+            checkpoints.append((phase,json.loads(json.dumps(outcomes)),
+                                json.loads(json.dumps(recovery))))
+        with self.assertRaises(m.ApiError):
+            m.reconcile(fake,policy(),apply=True,checkpoint=save)
+        self.assertEqual(fake.repo["allow_auto_merge"],True)
+        self.assertEqual([x[0] for x in fake.changed],["PATCH"])
+        self.assertEqual(checkpoints[-1][1][0]["state"],"VERIFIED")
+        self.assertEqual(checkpoints[-1][1][1]["state"],"CHANGE_REQUIRED")
+        self.assertEqual(checkpoints[-1][2][1]["previous"]["reviewers"][0]["id"],101)
+
+    def test_reviewer_restore_id_must_be_observed(self):
+        fake=FakeGh()
+        fake.environment["protection_rules"][0]["reviewers"][0]["reviewer"].pop("id")
+        with self.assertRaisesRegex(m.PolicyError,"REVIEWER_ROLLBACK_IDENTITY_UNVERIFIED"):
+            m.reconcile(fake,policy(),apply=True,checkpoint=lambda *args: None)
+        self.assertFalse(fake.changed)
+
+    def test_self_review_rule_is_preserved(self):
+        current=env()
+        current["prevent_self_review"]=True
+        payload=m.reviewer_update(current,["reviewer"],True)
+        self.assertTrue(payload["prevent_self_review"])
+        self.assertTrue(m.environment_restore_payload(current)["prevent_self_review"])
+
+    def test_safe_default_home_directory_not_assumed_git_worktree(self):
+        with tempfile.TemporaryDirectory() as base:
+            dest=Path(base)/"AppData"/"Local"/"GitHubOps"
+            with patch.object(m.subprocess,"run",
+                              return_value=SimpleNamespace(returncode=128,stdout="")),
+                 patch.object(m.Path,"cwd",return_value=Path(base)):
+                result=m.output_path(str(dest))
+            self.assertTrue(result.parent.is_dir())
+
+    def test_real_git_worktree_report_location_denied(self):
+        with tempfile.TemporaryDirectory() as base:
+            with patch.object(m.subprocess,"run",
+                              return_value=SimpleNamespace(returncode=0,stdout=base+"\n")):
+                with self.assertRaisesRegex(m.PolicyError,"PRIVATE_CENSUS_OUTPUT_WITHIN_WORKTREE"):
+                    m.output_path(str(Path(base)/"child"))
+
     def test_api_errors_classified_without_sensitive_text(self):
         self.assertEqual(m.api_class("HTTP 403 SECRET_ABC123"),"HTTP_403")
         self.assertEqual(m.api_class("private bearer abc"),"API_UNAVAILABLE")
