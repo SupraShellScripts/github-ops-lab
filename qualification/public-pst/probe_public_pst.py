@@ -65,6 +65,29 @@ def get_bytes(name: str, size: int) -> bytes:
     return raw
 
 
+
+# A zero exit is not independent proof of recovery: libpff may emit internal
+# item/attachment export errors and still report process success.
+ERROR_TAGS = {
+    "unable_recover": b"unable to recover",
+    "unable_export": b"unable to export",
+    "unable_read": b"unable to read",
+    "unable_retrieve": b"unable to retrieve",
+    "failed": b"failed",
+    "unsupported": b"unsupported",
+}
+
+def classify_native_exit(code: int, stderr: bytes) -> tuple[str, list[str]]:
+    # No raw stderr appears in logs, even on source/reader failures.
+    excerpt = stderr[:65536].lower()
+    tags = sorted(key for key, pattern in ERROR_TAGS.items() if pattern in excerpt)
+    if code != 0:
+        return "NONZERO", tags
+    if tags:
+        return "EXIT0_WITH_DIAGNOSTICS", tags
+    return "CLEAN_EXIT0", []
+
+
 def selftest() -> None:
     sample = bytearray(32)
     sample[:4] = b"!BDN"
@@ -83,7 +106,10 @@ def selftest() -> None:
         except ValueError:
             continue
         raise AssertionError("negative control unexpectedly accepted")
-    print("PASS_SELFTEST 1 positive 4 negative; no downloads")
+    assert classify_native_exit(0, b"")[0] == "CLEAN_EXIT0"
+    assert classify_native_exit(0, b"libpff: unable to retrieve item")[0] == "EXIT0_WITH_DIAGNOSTICS"
+    assert classify_native_exit(1, b"unable to recover blocks")[0] == "NONZERO"
+    print("PASS_SELFTEST 1 positive 4 negative + 3 exit/diagnostic controls; no downloads")
 
 
 def main() -> int:
@@ -128,11 +154,16 @@ def main() -> int:
                     target = Path(work) / ("native-" + str(len(results)) + "-" + mode)
                     try:
                         result = subprocess.run(
-                            [exporter, "-m", mode, "-t", str(target), str(candidate)],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            [exporter, "-v", "-m", mode, "-t", str(target), str(candidate)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                             timeout=25, check=False,
                         )
-                        row["export_" + mode] = "PASS" if result.returncode == 0 else "NONZERO"
+                        status, diagnostic_tags = classify_native_exit(
+                            result.returncode, result.stderr
+                        )
+                        row["export_" + mode] = status
+                        row["export_" + mode + "_exit"] = result.returncode
+                        row["export_" + mode + "_diagnostics"] = diagnostic_tags
                     except subprocess.TimeoutExpired:
                         row["export_" + mode] = "TIMEOUT"
                     # Count only; never print content, output paths or filenames.
@@ -148,7 +179,7 @@ def main() -> int:
                       "fixture_count": len(results), "results": results}, sort_keys=True))
     failing = [r["fixture"] for r in results if args.native and
                r["fixture"] in READER_BASELINES and
-               (r.get("libpff") != "PASS" or r.get("export_items") != "PASS")]
+               (r.get("libpff") != "PASS" or r.get("export_items") != "CLEAN_EXIT0")]
     if failing:
         print("NATIVE_BASELINE_FIRST_FAILURE: " + ",".join(failing), file=sys.stderr)
         return 3
