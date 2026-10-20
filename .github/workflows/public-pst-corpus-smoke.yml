@@ -39,6 +39,9 @@ jobs:
       - name: Real public-PST integrity and libpff smoke
         shell: bash
         run: python3 qualification/public-pst/probe_public_pst.py --fetch --native
+      - name: Diagnose recovered/all first failure with sanitized native function classes
+        shell: bash
+        run: python3 qualification/public-pst/diagnose_native_modes.py
   public-windows-header:
     runs-on: windows-latest
     timeout-minutes: 12
