@@ -99,8 +99,9 @@ def main() -> int:
     if not args.fetch:
         parser.error("pass --selftest or --fetch")
     pff = shutil.which("pffinfo") if args.native else None
-    if args.native and pff is None:
-        print("MISSING_NATIVE_READER", file=sys.stderr)
+    exporter = shutil.which("pffexport") if args.native else None
+    if args.native and (pff is None or exporter is None):
+        print("MISSING_NATIVE_READER_OR_EXPORTER", file=sys.stderr)
         return 2
     results = []
     with tempfile.TemporaryDirectory(prefix="public-pst-", ignore_cleanup_errors=False) as work:
@@ -121,13 +122,33 @@ def main() -> int:
                         row["libpff_exit"] = p.returncode
                 except subprocess.TimeoutExpired:
                     row["libpff"] = "TIMEOUT"
+                # Exercise *distinct* allocated, recovered and complete export modes.
+                # Never expose message text or export filenames in the receipt.
+                for mode in ("items", "recovered", "all"):
+                    target = Path(work) / ("native-" + str(len(results)) + "-" + mode)
+                    try:
+                        result = subprocess.run(
+                            [exporter, "-m", mode, "-t", str(target), str(candidate)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            timeout=25, check=False,
+                        )
+                        row["export_" + mode] = "PASS" if result.returncode == 0 else "NONZERO"
+                    except subprocess.TimeoutExpired:
+                        row["export_" + mode] = "TIMEOUT"
+                    # Count only; never print content, output paths or filenames.
+                    roots = [x for x in Path(work).iterdir()
+                             if x.name.startswith(target.name + ".") and x.is_dir()]
+                    row["export_" + mode + "_files"] = sum(
+                        1 for folder in roots for item in folder.rglob("*") if item.is_file()
+                    )
                 candidate.unlink()
             results.append(row)
     # No message titles, senders, recipients, bodies, or attachment payloads.
     print(json.dumps({"schema": "public-pst-census/v1", "upstream_commit": REVISION,
                       "fixture_count": len(results), "results": results}, sort_keys=True))
-    failing = [r["fixture"] for r in results if r.get("libpff") != "PASS" and
-               r["fixture"] in READER_BASELINES and args.native]
+    failing = [r["fixture"] for r in results if args.native and
+               r["fixture"] in READER_BASELINES and
+               (r.get("libpff") != "PASS" or r.get("export_items") != "PASS")]
     if failing:
         print("NATIVE_BASELINE_FIRST_FAILURE: " + ",".join(failing), file=sys.stderr)
         return 3
