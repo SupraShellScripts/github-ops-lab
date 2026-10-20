@@ -1,0 +1,54 @@
+name: Public PST corpus native smoke
+
+on:
+  pull_request:
+    paths:
+      - 'qualification/public-pst/**'
+      - '.github/workflows/public-pst-corpus-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-pst-corpus-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  public-ubuntu-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Read only exact public source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Deterministic negative harness
+        run: python3 qualification/public-pst/probe_public_pst.py --selftest
+      - name: Install distro libpff reference reader
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends pff-tools
+          dpkg-query -W pff-tools
+          sha256sum "$(command -v pffinfo)"
+          pffinfo -V
+      - name: Real public-PST integrity and libpff smoke
+        shell: bash
+        run: python3 qualification/public-pst/probe_public_pst.py --fetch --native
+  public-windows-header:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - name: Read only exact public source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Native Windows PowerShell 5.1 engine and harmless fixture probe
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
+            throw 'Windows PowerShell 5.1 required'
+          }
+          python qualification/public-pst/probe_public_pst.py --selftest --fetch
