@@ -30,18 +30,24 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends pff-tools
+          sudo apt-get install -y --no-install-recommends pff-tools pst-utils
           dpkg-query -W pff-tools
           sha256sum "$(command -v pffinfo)"
           sha256sum "$(command -v pffexport)"
           pffinfo -V
           pffexport -V
+          dpkg-query -W pst-utils
+          sha256sum "$(command -v readpst)"
+          readpst -V
       - name: Real public-PST integrity and libpff smoke
         shell: bash
         run: python3 qualification/public-pst/probe_public_pst.py --fetch --native
       - name: Diagnose recovered/all first failure with sanitized native function classes
         shell: bash
         run: python3 qualification/public-pst/diagnose_native_modes.py
+      - name: Independent libpst native reader comparator
+        shell: bash
+        run: python3 qualification/public-pst/compare_readpst.py
   public-windows-header:
     runs-on: windows-latest
     timeout-minutes: 12
