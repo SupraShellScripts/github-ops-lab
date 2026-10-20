@@ -29,6 +29,11 @@ ERROR_MARKERS = {
     "already_exists": "already exists",
     "out_of_bounds": "out of bounds",
     "invalid_value": "invalid value",
+    "invalid_range_list": "invalid range list",
+    "missing_range_list": "missing range list",
+    "unable_read_allocation": "unable to read allocation",
+    "invalid_allocation": "invalid allocation",
+    "unable_retrieve_unallocated": "unable to retrieve number of unallocated",
     "failed": "failed",
 }
 
