@@ -33,7 +33,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends pff-tools
           dpkg-query -W pff-tools
           sha256sum "$(command -v pffinfo)"
+          sha256sum "$(command -v pffexport)"
           pffinfo -V
+          pffexport -V
       - name: Real public-PST integrity and libpff smoke
         shell: bash
         run: python3 qualification/public-pst/probe_public_pst.py --fetch --native
