@@ -30,6 +30,15 @@ Pull-request and push validation is non-mutating and uses minimal `GITHUB_TOKEN`
 
 Stable reusable tooling should graduate to its durable public home rather than turning this lab into a product repository.
 
+The public-surface native-settings reconciler is manual-only. To run it, supply a
+valid `PUBLIC_SURFACE_POLICY_JSON` repository secret and a narrowly scoped
+`PUBLIC_SURFACE_ADMIN_TOKEN`, then dispatch **Public surface native enforcement**.
+The `apply` input defaults to `false` for an observation run. Set it to `true`
+only for an intended settings change. Its former daily schedule was retired
+because the required policy and token were not configured; scheduled runs failed
+before checking any target. The policy must list explicit public repositories
+and enabled targets; the reconciler owns only their native interaction settings.
+
 ## Reusable public-site release readiness
 
 `.github/workflows/public-site-readiness.yml` extracts the common public-web CI mechanics proven by the SupraCraft VanillaCord and Bridge pilots. Consumers keep their own candidate generator, deterministic checks, Playwright routes/journeys, theme assertions, Lighthouse routes/budgets, and Lychee paths; the reusable workflow supplies the shared pinned execution mechanics and evidence upload.

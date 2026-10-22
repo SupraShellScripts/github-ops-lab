@@ -1,14 +1,12 @@
 name: Public surface native enforcement
 
 on:
-  schedule:
-    - cron: '17 4 * * *'
   workflow_dispatch:
     inputs:
       apply:
         description: 'Apply drift instead of observe-only'
         required: false
-        default: true
+        default: false
         type: boolean
 
 permissions:
@@ -36,15 +34,7 @@ jobs:
           --policy-env PUBLIC_SURFACE_POLICY_JSON
           --validate-only
 
-      - name: Reconcile scheduled policy
-        if: github.event_name == 'schedule'
-        run: >-
-          python3 ./scripts/github/reconcile-public-surface.py
-          --policy-env PUBLIC_SURFACE_POLICY_JSON
-          --apply
-
       - name: Reconcile manual policy
-        if: github.event_name == 'workflow_dispatch'
         run: >-
           python3 ./scripts/github/reconcile-public-surface.py
           --policy-env PUBLIC_SURFACE_POLICY_JSON
