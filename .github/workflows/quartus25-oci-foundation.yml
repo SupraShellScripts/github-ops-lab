@@ -1,0 +1,52 @@
+name: Quartus 25.1 vendor-free OCI base and complete TAR preflight
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/quartus25-oci-foundation.yml"
+      - "docker/fpga/quartus25-runtime-base/**"
+      - "scripts/fpga/quartus25_complete_tar_probe.py"
+      - "tests/test_quartus25_complete_tar_probe.py"
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-contract-and-base:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout original public-safe sources
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Qualify exact complete TAR/QDZ admission contract without vendor bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/fpga/quartus25_complete_tar_probe.py
+          python3 -m unittest discover -s tests -p test_quartus25_complete_tar_probe.py -v
+      - name: Ensure no proprietary or unexpected OCI build inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          find docker/fpga/quartus25-runtime-base -type f \
+            ! -name Dockerfile ! -name .dockerignore -print | tee "$RUNNER_TEMP/extra-oci-inputs.txt"
+          test ! -s "$RUNNER_TEMP/extra-oci-inputs.txt"
+      - name: Build OCI foundation with actual Docker engine (no push)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker version
+          docker build --pull --no-cache -t quartus25-vendor-free:test \
+            docker/fpga/quartus25-runtime-base
+          docker image inspect quartus25-vendor-free:test \
+            --format 'image={{.Id}} bytes={{.Size}}'
+      - name: Verify no vendor tool and run with minimal container privileges
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges quartus25-vendor-free:test \
+            sh -ec 'python3 --version; command -v python3; if command -v quartus_sh; then exit 6; fi'
+          echo 'OCI_OSS_BASE_PASS / TAR_SOURCE_CONTRACT_PASS; NO_VENDOR_BYTES / NO_EULA / NO_NATIVE_QUARTUS.' >> "$GITHUB_STEP_SUMMARY"
