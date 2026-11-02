@@ -17,7 +17,7 @@ try
     PSTFile pst = new PSTFile(args[0], FileAccess.Read);
     try
     {
-        int folders = 0, messages = 0, attachments = 0, unsupportedFolders = 0, notesRead = 0;
+        int folders = 0, messages = 0, attachments = 0, inlineTagged = 0, unsupportedFolders = 0, notesRead = 0;
         var stack = new Stack<(PSTFolder folder, int depth)>();
         stack.Push((pst.TopOfPersonalFolders, 0));
         while (stack.Count > 0)
@@ -32,6 +32,13 @@ try
                 {
                     var note = mail.GetNote(i);
                     attachments += note.AttachmentCount;
+                    for (int a = 0; a < note.AttachmentCount; a++)
+                    {
+                        var att = note.GetAttachmentObject(a);
+                        bool hidden = att.PC.GetBooleanProperty(PropertyID.PidTagAttachmentHidden) ?? false;
+                        string? cid = att.PC.GetStringProperty(PropertyID.PidTagAttachContentId);
+                        if (hidden || !string.IsNullOrEmpty(cid)) inlineTagged++;
+                    }
                     notesRead++;
                     if (attachments > 5000) throw new InvalidDataException("attachment count limit");
                 }
@@ -47,6 +54,7 @@ try
         output["folderReportedItemCount"] = messages;
         output["notesRead"] = notesRead;
         output["attachmentCount"] = attachments;
+        output["inlineTaggedAttachmentCount"] = inlineTagged;
         output["unsupportedNonMailFolders"] = unsupportedFolders;
         output["nativeMAPICompleteness"] = "UNVERIFIED";
     }
