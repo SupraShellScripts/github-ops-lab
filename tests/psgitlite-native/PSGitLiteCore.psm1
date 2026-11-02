@@ -2,7 +2,7 @@
 # Runtime: no git.exe, Add-Type, child process, native library, COM or network.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:utf8 = New-Object System.Text.UTF8Encoding($false, $true)
+$script:utf8 = [Text.UTF8Encoding]::new($false,$true)
 $script:ascii = [Text.Encoding]::ASCII
 
 function ConvertTo-LiteHex([byte[]]$B) {
@@ -40,8 +40,8 @@ function New-GitLiteRepository {
   if($PSCmdlet.ShouldProcess($root,'Create disposable Git SHA-1 repository')){
     [void][IO.Directory]::CreateDirectory([IO.Path]::Combine($git,'objects'))
     [void][IO.Directory]::CreateDirectory([IO.Path]::Combine($git,'refs','heads'))
-    [IO.File]::WriteAllText([IO.Path]::Combine($git,'HEAD'),"ref: refs/heads/main\`n",$script:utf8)
-    [IO.File]::WriteAllText([IO.Path]::Combine($git,'config'),"[core]\`n\trepositoryformatversion = 0\`n\tbare = false\`n",$script:utf8)
+    [IO.File]::WriteAllText([IO.Path]::Combine($git,'HEAD'),"ref: refs/heads/main`n",$script:utf8)
+    [IO.File]::WriteAllText([IO.Path]::Combine($git,'config'),"[core]`n`trepositoryformatversion = 0`n`tbare = false`n",$script:utf8)
     return $root
   }
 }
@@ -52,7 +52,7 @@ function New-GitLiteObject {
   if($Payload.Length -gt 33554432){throw 'Payload bound'}
   $repo=Assert-LiteRepo $RepositoryPath
   $prefix=$script:ascii.GetBytes("$Type $($Payload.Length)")
-  $ms=New-Object IO.MemoryStream
+  $ms=[IO.MemoryStream]::new()
   try{
     $ms.Write($prefix,0,$prefix.Length);$ms.WriteByte(0);$ms.Write($Payload,0,$Payload.Length)
     $raw=$ms.ToArray();$id=Get-LiteSha $raw
@@ -60,10 +60,10 @@ function New-GitLiteObject {
     $dest=[IO.Path]::Combine($dir,$id.Substring(2))
     if([IO.File]::Exists($dest)){return $id}
     [void][IO.Directory]::CreateDirectory($dir)
-    $compressed=New-Object IO.MemoryStream
+    $compressed=[IO.MemoryStream]::new()
     try{
       $compressed.WriteByte(0x78);$compressed.WriteByte(0x9c)
-      $def=New-Object IO.Compression.DeflateStream($compressed,[IO.Compression.CompressionMode]::Compress,$true)
+      $def=[IO.Compression.DeflateStream]::new($compressed,[IO.Compression.CompressionMode]::Compress,$true)
       try{$def.Write($raw,0,$raw.Length)}finally{$def.Dispose()}
       Write-Lite32 $compressed (Get-LiteAdler $raw)
       $tmp=[IO.Path]::Combine($dir,([guid]::NewGuid().ToString('N')+'.tmp'))
@@ -81,11 +81,11 @@ function Get-GitLiteObject {
   $file=[IO.Path]::Combine($repo.Git,'objects',$Sha.Substring(0,2),$Sha.Substring(2))
   $z=[IO.File]::ReadAllBytes($file)
   if($z.Length -lt 7 -or $z[0] -ne 0x78 -or (($z[0]*256+$z[1])%31) -ne 0){throw 'Invalid zlib'}
-  $input=New-Object IO.MemoryStream(,$z)
-  $output=New-Object IO.MemoryStream
+  $input=[IO.MemoryStream]::new($z,$false)
+  $output=[IO.MemoryStream]::new()
   try{
     $input.Position=2
-    $def=New-Object IO.Compression.DeflateStream($input,[IO.Compression.CompressionMode]::Decompress,$true)
+    $def=[IO.Compression.DeflateStream]::new($input,[IO.Compression.CompressionMode]::Decompress,$true)
     try{
       $buf=New-Object byte[] 8192
       while(($n=$def.Read($buf,0,$buf.Length)) -gt 0){
@@ -122,7 +122,7 @@ function New-GitLiteSingleFileCommit {
   if($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Unsupported file type'}
   if($PSCmdlet.ShouldProcess($repo.Ref,'Create single-file Git commit')){
     $blob=New-GitLiteObject $repo.Root 'blob' ([IO.File]::ReadAllBytes($source))
-    $treeMs=New-Object IO.MemoryStream
+    $treeMs=[IO.MemoryStream]::new()
     try{
       $bytes=$script:utf8.GetBytes("100644 $FileName")
       $treeMs.Write($bytes,0,$bytes.Length);$treeMs.WriteByte(0)
@@ -136,14 +136,14 @@ function New-GitLiteSingleFileCommit {
     $sign=if($mins -lt 0){'-'}else{'+'}
     $tz='{0}{1:D2}{2:D2}' -f $sign,[int][Math]::Floor([Math]::Abs($mins)/60),([Math]::Abs($mins)%60)
     $ident="$AuthorName <$AuthorEmail> $($now.ToUnixTimeSeconds()) $tz"
-    $parentLine=if($parent){"parent $parent\`n"}else{''}
-    $body="tree $tree\`n$parentLine"+"author $ident\`ncommitter $ident\`n\`n$Message\`n"
+    $parentLine=if($parent){"parent $parent`n"}else{''}
+    $body="tree $tree`n$parentLine"+"author $ident`ncommitter $ident`n`n$Message`n"
     $commit=New-GitLiteObject $repo.Root 'commit' ($script:utf8.GetBytes($body))
     $check=if([IO.File]::Exists($repo.Ref)){[IO.File]::ReadAllText($repo.Ref).Trim()}else{$null}
     if($check -cne $parent){throw 'Concurrent branch update'}
     $lock=$repo.Ref+'.lock'
-    $out=New-Object IO.FileStream($lock,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-    try{$b=$script:ascii.GetBytes("$commit\`n");$out.Write($b,0,$b.Length)}finally{$out.Dispose()}
+    $out=[IO.FileStream]::new($lock,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+    try{$b=$script:ascii.GetBytes("$commit`n");$out.Write($b,0,$b.Length)}finally{$out.Dispose()}
     try{
       if([IO.File]::Exists($repo.Ref)){[IO.File]::Replace($lock,$repo.Ref,$null)}
       else{[IO.File]::Move($lock,$repo.Ref)}
