@@ -143,6 +143,10 @@ def main() -> int:
             finally:
                 mb.unlock()
                 mb.close()
+            if mbox_path.stat().st_size > 2_000_000:
+                record["status"] = "MBOX_SIZE_LIMIT"
+                results.append(record)
+                continue
             config = {"outputs": [{"name": "RoundtripPublic", "maxSizeMB": 100,
                                   "folderMapping": "mirror",
                                   "sources": [{"path": str(mbox_path), "type": "mbox"}]}]}
@@ -160,6 +164,10 @@ def main() -> int:
                 results.append(record)
                 continue
             newpst = artifacts[0]
+            if newpst.stat().st_size > 16_000_000:
+                record["status"] = "WRITTEN_PST_SIZE_LIMIT"
+                results.append(record)
+                continue
             record["pffinfo_exit"], _ = command(["pffinfo", str(newpst)])
             record["rewrite_csharp"] = check_csharp(newpst, probe)
             regenerated = home / ("reexport-" + str(ix))
