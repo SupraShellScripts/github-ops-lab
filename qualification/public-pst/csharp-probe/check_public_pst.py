@@ -10,6 +10,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+# Source file lives one directory above this nested probe.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from probe_public_pst import FIXTURES, get_bytes, verify_bytes
 
 def probe(exe: Path, path: Path) -> dict:
