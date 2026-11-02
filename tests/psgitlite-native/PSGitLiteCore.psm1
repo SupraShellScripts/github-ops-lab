@@ -100,57 +100,7 @@ function Get-GitLiteObject {
   $nul=[Array]::IndexOf($raw,[byte]0)
   if($nul -lt 4 -or $nul -gt 40){throw 'Invalid Git header'}
   $header=$script:ascii.GetString($raw,0,$nul)
-  if($header -cmatch '^(blob|tree|commit) ([0-9]+)
-  if($size -ne ($raw.Length-$nul-1)){throw 'Invalid object size'}
-  $data=New-Object byte[] $size
-  [Array]::Copy($raw,$nul+1,$data,0,$size)
-  return [pscustomobject]@{Type=$type;Sha=$Sha;Data=$data}
-}
-function New-GitLiteSingleFileCommit {
-  [CmdletBinding(SupportsShouldProcess=$true)]param(
-    [Parameter(Mandatory)][string]$RepositoryPath,
-    [Parameter(Mandatory)][string]$FileName,
-    [Parameter(Mandatory)][string]$Message,
-    [Parameter(Mandatory)][string]$AuthorName,
-    [Parameter(Mandatory)][string]$AuthorEmail)
-  if($FileName -cnotmatch '^[a-zA-Z0-9_.-]+$' -or $FileName -eq '.git'){throw 'Restricted single-file name'}
-  if($AuthorName -match '[<>\x00\r\n]' -or $AuthorEmail -cnotmatch '^[^<>\s@]+@[^<>\s@]+$' -or $Message.Contains([char]0)){throw 'Invalid commit fields'}
-  $repo=Assert-LiteRepo $RepositoryPath
-  $source=[IO.Path]::Combine($repo.Root,$FileName)
-  $file=Get-Item -LiteralPath $source -Force
-  if($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Unsupported file type'}
-  if($PSCmdlet.ShouldProcess($repo.Ref,'Create single-file Git commit')){
-    $blob=New-GitLiteObject $repo.Root 'blob' ([IO.File]::ReadAllBytes($source))
-    $treeMs=[IO.MemoryStream]::new()
-    try{
-      $bytes=$script:utf8.GetBytes("100644 $FileName")
-      $treeMs.Write($bytes,0,$bytes.Length);$treeMs.WriteByte(0)
-      for($i=0;$i -lt 40;$i+=2){$treeMs.WriteByte([Convert]::ToByte($blob.Substring($i,2),16))}
-      $tree=New-GitLiteObject $repo.Root 'tree' $treeMs.ToArray()
-    }finally{$treeMs.Dispose()}
-    $parent=if([IO.File]::Exists($repo.Ref)){[IO.File]::ReadAllText($repo.Ref).Trim()}else{$null}
-    if($parent -and $parent -cnotmatch '^[a-f0-9]{40}$'){throw 'Invalid parent'}
-    $now=[DateTimeOffset]::Now
-    $mins=[int]$now.Offset.TotalMinutes
-    $sign=if($mins -lt 0){'-'}else{'+'}
-    $tz='{0}{1:D2}{2:D2}' -f $sign,[int][Math]::Floor([Math]::Abs($mins)/60),([Math]::Abs($mins)%60)
-    $ident="$AuthorName <$AuthorEmail> $($now.ToUnixTimeSeconds()) $tz"
-    $parentLine=if($parent){"parent $parent`n"}else{''}
-    $body="tree $tree`n$parentLine"+"author $ident`ncommitter $ident`n`n$Message`n"
-    $commit=New-GitLiteObject $repo.Root 'commit' ($script:utf8.GetBytes($body))
-    $check=if([IO.File]::Exists($repo.Ref)){[IO.File]::ReadAllText($repo.Ref).Trim()}else{$null}
-    if($check -cne $parent){throw 'Concurrent branch update'}
-    $lock=$repo.Ref+'.lock'
-    $out=[IO.FileStream]::new($lock,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-    try{$b=$script:ascii.GetBytes("$commit`n");$out.Write($b,0,$b.Length)}finally{$out.Dispose()}
-    try{
-      if([IO.File]::Exists($repo.Ref)){[IO.File]::Replace($lock,$repo.Ref,$null)}
-      else{[IO.File]::Move($lock,$repo.Ref)}
-    }finally{if([IO.File]::Exists($lock)){[IO.File]::Delete($lock)}}
-    return [pscustomobject]@{Blob=$blob;Tree=$tree;Commit=$commit;Parent=$parent}
-  }
-}
-Export-ModuleMember -Function New-GitLiteRepository,New-GitLiteObject,Get-GitLiteObject,New-GitLiteSingleFileCommit){$type=$Matches[1];$size=[int]$Matches[2]}else{throw 'Invalid object header'}
+  if($header -cmatch '^(blob|tree|commit) ([0-9]+)$'){$type=$Matches[1];$size=[int]$Matches[2]}else{throw 'Invalid object header'}
   if($size -ne ($raw.Length-$nul-1)){throw 'Invalid object size'}
   $data=New-Object byte[] $size
   [Array]::Copy($raw,$nul+1,$data,0,$size)
