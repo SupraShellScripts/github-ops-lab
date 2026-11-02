@@ -1,0 +1,54 @@
+name: Public foreign PST native mutation
+
+on:
+  pull_request:
+    paths:
+      - 'qualification/public-pst/foreign-edit/**'
+      - '.github/workflows/public-pst-foreign-edit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  foreign-authored-staged-edit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - name: Checkout public harness
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Checkout pinned CSharp PSTFileFormat vendor through ContinuMail
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ContinuMail/continumail-converter
+          ref: d94d35e2f43611f0cbc85e1a8686b75249821079
+          path: upstream
+          persist-credentials: false
+      - name: NET8 SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install independent PST readers
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends pff-tools pst-utils
+          dpkg-query -W pff-tools pst-utils
+          test "$(git -C upstream rev-parse HEAD)" = "d94d35e2f43611f0cbc85e1a8686b75249821079"
+      - name: Build native staged-edit probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p upstream/ForeignEdit
+          cp qualification/public-pst/foreign-edit/Program.cs upstream/ForeignEdit/Program.cs
+          cp qualification/public-pst/foreign-edit/ForeignEdit.csproj upstream/ForeignEdit/ForeignEdit.csproj
+          dotnet build upstream/ForeignEdit/ForeignEdit.csproj -c Release
+      - name: Edit disposable third-party PST and verify with independent readers
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 qualification/public-pst/foreign-edit/check_foreign_edit.py upstream/ForeignEdit/bin/Release/net8.0/ForeignEdit.dll
