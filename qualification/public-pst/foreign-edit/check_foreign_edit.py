@@ -63,6 +63,15 @@ def main():
         except (ValueError,TypeError):row["native_result"]={"status":"UNPARSEABLE"}
         if edit_exit==0:
             row["pffinfo_exit"],_=run(["pffinfo",str(stage)])
+            export_prefix=base/"pffedit"
+            row["pffexport_exit"],_=run(["pffexport","-m","items","-t",str(export_prefix),str(stage)])
+            pff_files=[p for folder in base.glob(export_prefix.name+".*") if folder.is_dir()
+                       for p in folder.rglob("*") if p.is_file() and not p.is_symlink()]
+            row["pffexport_files"]=len(pff_files)
+            row["pffexport_contains_updated_subject_token"]=any(
+                b"FOREIGN-PST-UPDATED" in p.read_bytes() for p in pff_files
+                if p.stat().st_size < 1_000_000
+            )
             row["rewritten_readpst_exit"],_=run(["readpst","-q","-e","-o",str(after),str(stage)])
             orig_files,orig_messages,orig_blobs=eml_inventory(before)
             out_files,out_messages,out_blobs=eml_inventory(after)
