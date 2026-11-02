@@ -1,0 +1,102 @@
+name: Public CSharp PSTFileFormat build and native bakeoff
+
+on:
+  pull_request:
+    paths:
+      - 'qualification/public-pst/csharp-probe/**'
+      - '.github/workflows/public-pst-csharp-bakeoff.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-pst-csharp-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  public-csharp-native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 19
+    steps:
+      - name: Checkout public lab source only
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Checkout exact upstream GPL/LGPL CSharp source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ContinuMail/continumail-converter
+          ref: d94d35e2f43611f0cbc85e1a8686b75249821079
+          path: upstream
+          persist-credentials: false
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install independent native reference readers
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends pff-tools pst-utils
+          dotnet --version
+          dpkg-query -W pff-tools pst-utils
+          sha256sum "$(command -v pffinfo)" "$(command -v readpst)"
+          git -C upstream rev-parse HEAD
+          test "$(git -C upstream rev-parse HEAD)" = d94d35e2f43611f0cbc85e1a8686b75249821079
+      - name: Restore, build CSharp solution and focused native round-trip tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore upstream/Mail2Pst.sln --disable-parallel
+          dotnet build upstream/Mail2Pst.sln -c Release --no-restore
+          dotnet test upstream/Mail2Pst.sln -c Release --no-build --no-restore --filter 'FullyQualifiedName~FixtureRoundTripTests|FullyQualifiedName~ReadBackSpikeTests|FullyQualifiedName~PstReaderTests' --logger 'console;verbosity=minimal'
+      - name: Compile our bounded CSharp read-only probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p upstream/Probe
+          cp qualification/public-pst/csharp-probe/Program.cs upstream/Probe/Program.cs
+          cp qualification/public-pst/csharp-probe/Probe.csproj upstream/Probe/Probe.csproj
+          dotnet build upstream/Probe/Probe.csproj -c Release
+      - name: Read published independent PST sources through CSharp
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 qualification/public-pst/csharp-probe/check_public_pst.py upstream/Probe/bin/Release/net8.0/Probe.dll
+      - name: Generate actual PST from source-authored synthetic mbox
+        shell: bash
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          umask 077
+          dotnet run --project src/Mail2Pst.Cli -c Release --no-build -- scan --input fixtures/sample.mbox > "$RUNNER_TEMP/public-csharp-scan.json"
+          python3 - "$RUNNER_TEMP/public-csharp-scan.json" <<'PY'
+          import json,sys
+          doc=json.load(open(sys.argv[1]))
+          assert doc.get("type") == "scan" and doc["totals"]["messages"] == 2, "unexpected scan count"
+          print("CSHARP_SCAN_PASS expected 2 synthetic messages")
+          PY
+          dotnet run --project src/Mail2Pst.Cli -c Release --no-build -- convert --config fixtures/sample-config.json --output "$RUNNER_TEMP/public-csharp-output" > "$RUNNER_TEMP/public-csharp-convert-receipt.jsonl"
+          find "$RUNNER_TEMP/public-csharp-output" -type f -name '*.pst' -print0 > "$RUNNER_TEMP/public-pst-list"
+          test -s "$RUNNER_TEMP/public-pst-list"
+      - name: Independently validate writer PST through libpff and libpst
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mapfile -d '' PSTS < "$RUNNER_TEMP/public-pst-list"
+          test "${#PSTS[@]}" -eq 1
+          mkdir -p "$RUNNER_TEMP/independent-extracted"
+          pffinfo "${PSTS[0]}" > /dev/null
+          readpst -q -e -o "$RUNNER_TEMP/independent-extracted" "${PSTS[0]}" > /dev/null 2> "$RUNNER_TEMP/reader-stderr"
+          dotnet upstream/Probe/bin/Release/net8.0/Probe.dll "${PSTS[0]}"
+          python3 - "$RUNNER_TEMP/independent-extracted" <<'PY'
+          from pathlib import Path
+          import sys
+          files = list(Path(sys.argv[1]).rglob("*.eml"))
+          assert len(files) == 2, "expected 2 independently extracted EML"
+          print("CSHARP_PST_WRITER_INDEPENDENT_READ_PASS 2 synthetic EML")
+          PY
