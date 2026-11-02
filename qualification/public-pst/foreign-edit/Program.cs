@@ -40,9 +40,19 @@ try {
            saved.Body!="FOREIGN-PST-UPDATED-BODY"||
            saved.AttachmentCount!=1)
             throw new InvalidDataException("native persisted mutation failed");
+        var pcSubject = saved.PC.GetStringProperty(PropertyID.PidTagSubject);
+        var pcNormalized = saved.PC.GetStringProperty((PropertyID)0x0E1D);
+        string? rowSubject = null;
+        string? rowNormalized = null;
+        try { rowSubject = after.GetMessageStringProperty(0, PropertyID.PidTagSubject); } catch {}
+        try { rowNormalized = after.GetMessageStringProperty(0, (PropertyID)0x0E1D); } catch {}
         Console.WriteLine(JsonSerializer.Serialize(new{
-            schema="public-foreign-pst-native-mutation/v1",
+            schema="public-foreign-pst-native-mutation/v2",
             status="MUTATED_REOPENED_CSHARP",
+            pcSubjectHasExpectedToken = pcSubject?.Contains("FOREIGN-PST-UPDATED") ?? false,
+            pcNormalizedSubjectHasExpectedToken = pcNormalized?.Contains("FOREIGN-PST-UPDATED") ?? false,
+            rowSubjectHasExpectedToken = rowSubject?.Contains("FOREIGN-PST-UPDATED") ?? false,
+            rowNormalizedSubjectHasExpectedToken = rowNormalized?.Contains("FOREIGN-PST-UPDATED") ?? false,
             messageCount=after.MessageCount,
             attachmentCount=saved.AttachmentCount,
             allMAPIPropertiesVerified=false
