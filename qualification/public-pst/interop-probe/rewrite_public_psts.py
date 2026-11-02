@@ -7,6 +7,7 @@ bodies, filenames of recovered items, or derived private hashes printed.
 """
 from __future__ import annotations
 import collections
+from email.utils import getaddresses
 from email import policy
 from email.parser import BytesParser
 import hashlib
@@ -44,6 +45,8 @@ def inventory(messages):
         "cc": collections.Counter(),
         "bcc": collections.Counter(),
         "plain": collections.Counter(),
+        "plain-whitespace-normalized": collections.Counter(),
+        "to-addresses-only": collections.Counter(),
         "html": collections.Counter(),
         "binary": collections.Counter(),
     }
@@ -54,6 +57,9 @@ def inventory(messages):
             val = str(m.get(field) or "").strip()
             if val:
                 fields[field][hashlib.sha256(val.encode("utf-8")).hexdigest()] += 1
+        for display_name, addr in getaddresses(m.get_all("To", [])):
+            if addr:
+                fields["to-addresses-only"][hashlib.sha256(addr.casefold().encode("utf-8")).hexdigest()] += 1
         for part in m.walk():
             defects += len(part.defects)
             ct = part.get_content_type()
@@ -75,6 +81,9 @@ def inventory(messages):
                 # Normalize line endings, not characters, before byte hashing.
                 raw = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
             fields[key][hashlib.sha256(raw).hexdigest()] += 1
+            if key == "plain":
+                normalized = " ".join(raw.decode(part.get_content_charset() or "utf-8", errors="replace").split())
+                fields["plain-whitespace-normalized"][hashlib.sha256(normalized.encode("utf-8")).hexdigest()] += 1
     return fields, {"messages": len(messages), "mime_defects": defects, "embedded_rfc822": embedded}
 
 def compare(source, output):
@@ -93,6 +102,8 @@ def compare(source, output):
         "source_plain_parts": sum(left["plain"].values()),
         "rewrite_plain_parts": sum(right["plain"].values()),
         "field_multiset_equal": equal,
+        "binary_payload_fidelity": "MATCH" if equal["binary"] else "MISMATCH",
+        "embedded_rfc822_fidelity": "MATCH" if lmeta["embedded_rfc822"] == rmeta["embedded_rfc822"] else "MISMATCH",
         "comparable_MAPI_properties": "NOT_ALL",
         "native_source_object_completeness": "UNVERIFIED"
     }
@@ -178,19 +189,24 @@ def main() -> int:
             after = collect_eml(regenerated)
             record["semantic"] = compare(before, after)
             record["status"] = (
-                "REWRITTEN_SEMANTIC_COMPARISON_RECORDED"
-                if record["pffinfo_exit"] == 0 and record["rewrite_readpst_exit"] == 0
-                else "REWRITTEN_READER_FAILED"
+                "REWRITTEN_READER_FAILED"
+                if record["pffinfo_exit"] != 0 or record["rewrite_readpst_exit"] != 0
+                else "REWRITTEN_BINARY_MISMATCH"
+                if not record["semantic"]["field_multiset_equal"]["binary"]
+                else "REWRITTEN_SEMANTIC_GAPS"
+                if not all(record["semantic"]["field_multiset_equal"].values())
+                   or record["semantic"]["embedded_rfc822_fidelity"] != "MATCH"
+                else "REWRITTEN_COMPARABLE_FIELDS_MATCH"
             )
             verify_bytes(src.read_bytes(), sha, size, version)
             results.append(record)
     print(json.dumps({
-        "schema": "public-pst-cross-reader-rewrite/v1",
+        "schema": "public-pst-cross-reader-rewrite/v2",
         "source_revision": "857470dfc1ea8c4d03d4d93603401a05c2c8e307",
         "scope": "public-synthetic-only; source-MIME-derived; lossy-MAPI-risk",
         "cases": results
     }, sort_keys=True))
-    return 0 if all(c["status"] == "REWRITTEN_SEMANTIC_COMPARISON_RECORDED" for c in results) else 3
+    return 0 if all(c["status"] in ("REWRITTEN_SEMANTIC_GAPS", "REWRITTEN_COMPARABLE_FIELDS_MATCH") for c in results) else 3
 
 if __name__ == "__main__":
     try:
