@@ -12,9 +12,9 @@ function Get-LiteSha([byte[]]$B) {
   $h=[Security.Cryptography.SHA1]::Create()
   try { return ConvertTo-LiteHex $h.ComputeHash($B) } finally { $h.Dispose() }
 }
-function Get-LiteAdler([byte[]]$B) {
+function Get-LiteAdler([byte[]]$Bytes) {
   [uint32]$a=1; [uint32]$b=0
-  foreach($v in $B){$a=[uint32](($a+[uint32]$v)%65521);$b=[uint32](($b+$a)%65521)}
+  foreach($v in $Bytes){$a=[uint32](($a+[uint32]$v)%65521);$b=[uint32](($b+$a)%65521)}
   return [uint32](([uint64]$b -shl 16) -bor [uint64]$a)
 }
 function Write-Lite32([IO.Stream]$Stream,[uint32]$Number) {
