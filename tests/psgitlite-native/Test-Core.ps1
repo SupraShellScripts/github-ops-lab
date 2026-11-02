@@ -6,10 +6,10 @@ function Assert([bool]$pass,[string]$name) {
   if(-not $pass){throw "FAIL $name"}
   Write-Output "PASS $name"
 }
-function GitOracle([string]$Repo,[string[]]$Args) {
-  $out=@(& git -C $Repo @Args 2>&1)
-  if($LASTEXITCODE -ne 0){throw "Git independent oracle failed: $($Args -join ' '): $($out -join ' ')"}
-  return @($out)
+function GitOracle([string]$Repo,[string[]]$GitArguments) {
+  $out=@(& git -C $Repo @GitArguments 2>&1)
+  if($LASTEXITCODE -ne 0){throw "Git independent oracle failed: $($GitArguments -join ' '): $($out -join ' ')"}
+  return ,([string[]]$out)
 }
 $dir=[IO.Path]::Combine([IO.Path]::GetTempPath(),('psgitlite-cloud-'+[guid]::NewGuid().ToString('N')))
 [void][IO.Directory]::CreateDirectory($dir)
