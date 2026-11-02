@@ -14,7 +14,12 @@ function GitOracle([string]$Repo,[string[]]$GitArguments) {
 $dir=[IO.Path]::Combine([IO.Path]::GetTempPath(),('psgitlite-cloud-'+[guid]::NewGuid().ToString('N')))
 [void][IO.Directory]::CreateDirectory($dir)
 try {
-  $r=New-GitLiteRepository -Path $dir
+  $originalPath=$env:PATH
+  try {
+    $env:PATH=''
+    Assert (-not (Get-Command git -ErrorAction SilentlyContinue)) 'native Git command unavailable on PATH'
+    $r=New-GitLiteRepository -Path $dir
+  } finally { $env:PATH=$originalPath }
   Assert ([IO.Directory]::Exists([IO.Path]::Combine($dir,'.git'))) 'init creates Git metadata'
   $native=GitOracle $dir @('rev-parse','--is-inside-work-tree')
   Assert ($native[0] -eq 'true') 'Git reads PowerShell-generated repository'
