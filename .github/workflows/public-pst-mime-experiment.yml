@@ -45,4 +45,7 @@ jobs:
           set -euo pipefail
           umask 077
           ulimit -f 65536
-          python3 qualification/public-pst/experiment_payloads.py --run
+          for rep in 1 2 3; do
+            echo "PUBLIC_PST_REPEAT=$rep"
+            python3 qualification/public-pst/experiment_payloads.py --run
+          done
