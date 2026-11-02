@@ -1,0 +1,57 @@
+name: Public PST reader / rewrite interoperability
+
+on:
+  pull_request:
+    paths:
+      - 'qualification/public-pst/interop-probe/**'
+      - '.github/workflows/public-pst-interop-rewrite.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-interop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - name: Read-only checkout public lab
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Pinned upstream CSharp PST writer/readback
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ContinuMail/continumail-converter
+          ref: d94d35e2f43611f0cbc85e1a8686b75249821079
+          path: upstream
+          persist-credentials: false
+      - name: .NET 8
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '8.0.x'
+      - name: Independent system-level PST readers
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends pff-tools pst-utils
+          dpkg-query -W pff-tools pst-utils
+          sha256sum "$(command -v pffinfo)" "$(command -v readpst)"
+          test "$(git -C upstream rev-parse HEAD)" = "d94d35e2f43611f0cbc85e1a8686b75249821079"
+      - name: Build native CSharp writer/reader and bounded local probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet build upstream/src/Mail2Pst.Cli/Mail2Pst.Cli.csproj -c Release
+          mkdir -p upstream/Probe
+          cp qualification/public-pst/csharp-probe/Program.cs upstream/Probe/Program.cs
+          cp qualification/public-pst/csharp-probe/Probe.csproj upstream/Probe/Probe.csproj
+          dotnet build upstream/Probe/Probe.csproj -c Release
+      - name: External public PST to libpst EML to mbox to new CSharp PST
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          ulimit -f 65536
+          python3 qualification/public-pst/interop-probe/rewrite_public_psts.py             upstream/src/Mail2Pst.Cli/bin/Release/net8.0/Mail2Pst.Cli.dll             upstream/Probe/bin/Release/net8.0/Probe.dll
