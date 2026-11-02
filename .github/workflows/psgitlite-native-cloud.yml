@@ -1,0 +1,46 @@
+name: PSGitLite public-safe native PowerShell qualification
+on:
+  push:
+    branches:
+      - work/psgitlite-native-cloud-20261103
+    paths:
+      - 'tests/psgitlite-native/**'
+      - '.github/workflows/psgitlite-native-cloud.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: psgitlite-native-cloud-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-powershell-51:
+    name: Native Windows PowerShell 5.1
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Check installed interpreter
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'Require Windows PowerShell 5.1' }
+          Write-Output ('Windows PowerShell ' + $PSVersionTable.PSVersion.ToString())
+      - name: Execute pure-PowerShell module with independent Git oracle
+        shell: powershell
+        run: .\tests\psgitlite-native\Test-Core.ps1
+
+  linux-powershell:
+    name: Native Linux PowerShell Core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Execute pure-PowerShell module with independent Git oracle
+        shell: pwsh
+        run: ./tests/psgitlite-native/Test-Core.ps1
