@@ -71,13 +71,19 @@ def main():
                         b=part.get_payload(decode=True)
                         if b is not None:
                             text.append(b.decode(part.get_content_charset() or "utf-8",errors="replace"))
+            expected="FOREIGN-PST-UPDATED"
+            mutated_subjects=[str(m.get("Subject") or "").strip() for m in out_messages]
+            source_subjects=[str(m.get("Subject") or "").strip() for m in orig_messages]
             row.update({
+                "subject_changed_in_independent_export":source_subjects!=mutated_subjects,
+                "expected_subject_token_contained":any(expected in subj for subj in mutated_subjects),
+                "expected_subject_exact":any(subj==expected for subj in mutated_subjects),
                 "original_eml_count":len(orig_files),
                 "mutated_eml_count":len(out_files),
                 "binary_sha_multiset_preserved":orig_blobs==out_blobs,
                 "original_attachment_occurrences":sum(orig_blobs.values()),
                 "mutated_attachment_occurrences":sum(out_blobs.values()),
-                "edited_subject_seen":any(str(m.get("Subject",""))=="FOREIGN-PST-UPDATED" for m in out_messages),
+                "edited_subject_seen":any(s==expected for s in mutated_subjects),
                 "edited_body_seen":any("FOREIGN-PST-UPDATED-BODY" in s for s in text),
                 "full_MAPI_bag_preserved":"UNVERIFIED"
             })
