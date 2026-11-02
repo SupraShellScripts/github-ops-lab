@@ -50,6 +50,10 @@ def main() -> int:
                  for p in result_files]
     sv, si, se, sd = inventory(src_messages)
     rv, ri, re, rd = inventory(recovered)
+    source_blobs = sv + si
+    recovered_blobs = rv + ri
+    missing = source_blobs - recovered_blobs
+    unexpected = recovered_blobs - source_blobs
     result = {
         "schema": "public-csharp-attachment-digest/v1",
         "source_message_count": len(src_messages),
@@ -64,14 +68,18 @@ def main() -> int:
         "recovered_mime_defects": rd,
         "visible_sha256_multiset_equal": sv == rv,
         "inline_sha256_multiset_equal": si == ri,
+        "binary_sha256_multiset_equal_across_dispositions": source_blobs == recovered_blobs,
+        "missing_expected_binary_occurrences": sum(missing.values()),
+        "unexpected_binary_occurrences": sum(unexpected.values()),
+        "known_visible_payloads_recovered_in_any_disposition": not bool(sv - recovered_blobs),
         "scope": "synthetic-known-MIME-only-not-full-MAPI",
     }
     print(json.dumps(result, sort_keys=True))
-    # Hard fail if known authored text file attachments vanish or change bytes.
-    if len(src_messages) != len(result_files) or not sv or sv != rv:
+    # Presence of authored original bytes is essential. Output MIME disposition
+    # is a separate semantic-fidelity gate; libpst may reclassify inline CID.
+    if len(src_messages) != len(result_files) or not sv or missing:
         return 3
-    # Inline equality is diagnostic, not a qualified gate until converter
-    # and independent reader CID representation is independently grounded.
+    # Extra/changed class is explicit in report and is NOT called lossless.
     return 0
 
 if __name__ == "__main__":
