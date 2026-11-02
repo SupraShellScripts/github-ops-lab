@@ -144,7 +144,11 @@ function New-GitLiteSingleFileCommit {
     $out=[IO.FileStream]::new($lock,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
     try{$b=$script:ascii.GetBytes("$commit`n");$out.Write($b,0,$b.Length)}finally{$out.Dispose()}
     try{
-      if([IO.File]::Exists($repo.Ref)){[IO.File]::Replace($lock,$repo.Ref,$null)}
+      if([IO.File]::Exists($repo.Ref)){
+        $backup=$repo.Ref+'.psg-backup-'+[guid]::NewGuid().ToString('N')
+        [IO.File]::Replace($lock,$repo.Ref,$backup)
+        if([IO.File]::Exists($backup)){[IO.File]::Delete($backup)}
+      }
       else{[IO.File]::Move($lock,$repo.Ref)}
     }finally{if([IO.File]::Exists($lock)){[IO.File]::Delete($lock)}}
     return [pscustomobject]@{Blob=$blob;Tree=$tree;Commit=$commit;Parent=$parent}
