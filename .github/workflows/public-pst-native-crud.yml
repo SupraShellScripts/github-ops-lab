@@ -1,0 +1,74 @@
+name: Public PST staged native CRUD qualification
+
+on:
+  pull_request:
+    paths:
+      - 'qualification/public-pst/crud-probe/**'
+      - '.github/workflows/public-pst-native-crud.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  staged-copy-crud:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - name: Read-only checkout of public test harness
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Checkout exact open CSharp candidate (no vendoring)
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ContinuMail/continumail-converter
+          ref: d94d35e2f43611f0cbc85e1a8686b75249821079
+          path: upstream
+          persist-credentials: false
+      - name: NET8 SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '8.0.x'
+      - name: Independent native tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends pff-tools pst-utils
+          dotnet --version
+          dpkg-query -W pff-tools pst-utils
+          test "$(git -C upstream rev-parse HEAD)" = "d94d35e2f43611f0cbc85e1a8686b75249821079"
+      - name: Build pinned CSharp writer plus staged CRUD probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet build upstream/src/Mail2Pst.Cli/Mail2Pst.Cli.csproj -c Release
+          mkdir -p upstream/CrudProbe
+          cp qualification/public-pst/crud-probe/Program.cs upstream/CrudProbe/Program.cs
+          cp qualification/public-pst/crud-probe/CrudProbe.csproj upstream/CrudProbe/CrudProbe.csproj
+          dotnet build upstream/CrudProbe/CrudProbe.csproj -c Release
+      - name: Create immutable synthetic source then mutate ONLY fresh copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/original" "$RUNNER_TEMP/staged"
+          (cd upstream && dotnet run --project src/Mail2Pst.Cli -c Release --no-build -- convert --config fixtures/sample-config.json --output "$RUNNER_TEMP/original" > "$RUNNER_TEMP/producer-receipt.jsonl")
+          mapfile -d '' PSTS < <(find "$RUNNER_TEMP/original" -type f -name '*.pst' -print0)
+          test "${#PSTS[@]}" -eq 1
+          original="${PSTS[0]}"
+          stage="$RUNNER_TEMP/staged/copy-on-write.pst"
+          test ! -e "$stage"
+          cp -- "$original" "$stage"
+          src_sha="$(sha256sum "$original" | cut -d ' ' -f1)"
+          test "$(sha256sum "$stage" | cut -d ' ' -f1)" = "$src_sha"
+          dotnet upstream/CrudProbe/bin/Release/net8.0/CrudProbe.dll "$stage"
+          test "$(sha256sum "$original" | cut -d ' ' -f1)" = "$src_sha"
+          test "$(sha256sum "$stage" | cut -d ' ' -f1)" != "$src_sha"
+          pffinfo "$original" > /dev/null
+          pffinfo "$stage" > /dev/null
+          mkdir "$RUNNER_TEMP/crud-eml"
+          readpst -q -e -o "$RUNNER_TEMP/crud-eml" "$stage" > /dev/null 2> "$RUNNER_TEMP/crud-readpst-stderr"
+          python3 qualification/public-pst/crud-probe/verify_crud_mime.py "$RUNNER_TEMP/crud-eml"
+          echo "ORIGINAL_SHA_UNCHANGED=YES"
