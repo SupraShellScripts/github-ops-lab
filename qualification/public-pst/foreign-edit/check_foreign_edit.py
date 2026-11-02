@@ -6,6 +6,7 @@ from email import policy
 from email.parser import BytesParser
 import hashlib
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -68,10 +69,12 @@ def main():
             pff_files=[p for folder in base.glob(export_prefix.name+".*") if folder.is_dir()
                        for p in folder.rglob("*") if p.is_file() and not p.is_symlink()]
             row["pffexport_files"]=len(pff_files)
-            row["pffexport_contains_updated_subject_token"]=any(
-                b"FOREIGN-PST-UPDATED" in p.read_bytes() for p in pff_files
-                if p.stat().st_size < 1_000_000
+            row["pffexport_contains_distinct_subject_token"]=any(
+                re.search(rb"(?<![A-Za-z0-9_-])FOREIGN-PST-UPDATED(?![A-Za-z0-9_-])", p.read_bytes()) is not None
+                for p in pff_files if p.stat().st_size < 1_000_000
             )
+            # Exact-token boundary is essential: the new body includes
+            # FOREIGN-PST-UPDATED-BODY; a substring probe would be a false positive.
             row["rewritten_readpst_exit"],_=run(["readpst","-q","-e","-o",str(after),str(stage)])
             orig_files,orig_messages,orig_blobs=eml_inventory(before)
             out_files,out_messages,out_blobs=eml_inventory(after)
