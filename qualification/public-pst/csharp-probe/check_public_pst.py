@@ -28,7 +28,7 @@ def probe(exe: Path, path: Path) -> dict:
         return {k: v for k, v in result.items()
                 if k in ("status", "errorType", "folderCount",
                          "folderReportedItemCount", "notesRead",
-                         "attachmentCount", "unsupportedNonMailFolders",
+                         "attachmentCount", "inlineTaggedAttachmentCount", "unsupportedNonMailFolders",
                          "nativeMAPICompleteness")}
     except subprocess.TimeoutExpired:
         return {"status": "TIMEOUT"}
