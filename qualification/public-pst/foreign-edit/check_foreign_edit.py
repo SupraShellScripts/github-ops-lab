@@ -57,7 +57,9 @@ def main():
         try:
             safe=json.loads(output)
             row["native_result"]={k:v for k,v in safe.items() if k in
-                                  ("status","firstFailureType","messageCount","attachmentCount")}
+                                  ("status","firstFailureType","messageCount","attachmentCount",
+                                   "pcSubjectHasExpectedToken","pcNormalizedSubjectHasExpectedToken",
+                                   "rowSubjectHasExpectedToken","rowNormalizedSubjectHasExpectedToken")}
         except (ValueError,TypeError):row["native_result"]={"status":"UNPARSEABLE"}
         if edit_exit==0:
             row["pffinfo_exit"],_=run(["pffinfo",str(stage)])
