@@ -53,5 +53,5 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          ulimit -f 65536
+          # CLR writes scratch files; byte limits are checked by the harness.
           python3 qualification/public-pst/interop-probe/rewrite_public_psts.py             upstream/src/Mail2Pst.Cli/bin/Release/net8.0/Mail2Pst.Cli.dll             upstream/Probe/bin/Release/net8.0/Probe.dll
