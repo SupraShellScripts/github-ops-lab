@@ -20,6 +20,10 @@ try {
     var note = mail.GetNote(0);
     if(note.AttachmentCount!=1)throw new InvalidDataException("expected one original attachment");
     note.Subject = "FOREIGN-PST-UPDATED";
+    // Outlook maintains a separate PidTagNormalizedSubject (0x0E1D).
+    // The existing foreign store may have this, and readers can prefer it
+    // over PidTagSubject. Probe a precise dual-property update on the stage.
+    note.PC.SetStringProperty((PropertyID)0x0E1D, "FOREIGN-PST-UPDATED");
     note.Body = "FOREIGN-PST-UPDATED-BODY";
     note.SaveChanges();
     mail.UpdateMessage(note);
