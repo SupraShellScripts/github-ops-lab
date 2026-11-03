@@ -27,7 +27,9 @@ try{
     WriteUtf8 (Join-Path $root 'data.xml') '<items><item>Thai</item></items>'
     WriteUtf8 (Join-Path $root 'doc.md') ('# Heading'+[char]10+'Some text'+[char]10+'## Second'+[char]10)
     WriteUtf8 (Join-Path $root 'content.txt') ('first'+[char]10+'One MARK'+[char]10+'last'+[char]10)
-    WriteUtf8 (Join-Path $root 'ภาษาไทย.txt') ('สวัสดี'+[char]10)
+    $thaiName=([string][char]0x0E20)+([char]0x0E32)+([char]0x0E29)+([char]0x0E32)+'.txt'
+    $thaiText=([string][char]0x0E2A)+([char]0x0E27)+([char]0x0E31)+([char]0x0E2A)+([char]0x0E14)+([char]0x0E35)
+    WriteUtf8 (Join-Path $root $thaiName) ($thaiText+[char]10)
     $observation=Get-SeedObservation
     Check '01-observation-schema' ($observation.schemaVersion -ceq 'seed.observation.v1')
     Check '02-never-proves-Git' ($observation.git -ceq 'NOT_PROVEN')
@@ -51,8 +53,8 @@ try{
     Check '14-markdown-headings' ($md.headings.Count -eq 2 -and $md.headings[1].level -eq 2)
     $txt=Get-SeedDocument -Root $root -RelativePath 'content.txt'
     Check '15-text-line-count' ($txt.lineCount -eq 4)
-    $thai=Get-SeedDocument -Root $root -RelativePath 'ภาษาไทย.txt' -IncludeContent
-    Check '16-Thai-Unicode-read' ($thai.content -ceq ('สวัสดี'+[char]10))
+    $thai=Get-SeedDocument -Root $root -RelativePath $thaiName -IncludeContent
+    Check '16-Thai-Unicode-read' ($thai.content -ceq ($thaiText+[char]10))
     $found=Find-SeedLiteral -Root $root -RelativePath 'content.txt' -Needle 'mark'
     Check '17-case-insensitive-literal-find' ($found.matches.Count -eq 1 -and $found.matches[0].line -eq 2)
     Check '18-no-excerpt-default' (-not $found.contentReturned -and $null -eq $found.matches[0].PSObject.Properties['excerpt'])
