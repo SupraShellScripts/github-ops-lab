@@ -30,10 +30,10 @@ function Get-PackSlice([byte[]]$B,[long]$Start,[long]$Length){
     [Array]::Copy($B,[int]$Start,$out,0,[int]$Length)
     return ,$out
 }
-function Get-PackAdler([byte[]]$B){
-    [uint32]$a=1;[uint32]$b=0
-    foreach($v in $B){$a=[uint32](($a+[uint32]$v)%65521);$b=[uint32](($b+$a)%65521)}
-    return [uint32](([uint64]$b -shl 16) -bor [uint64]$a)
+function Get-PackAdler([byte[]]$Bytes){
+    [uint32]$sumA=1;[uint32]$sumB=0
+    foreach($v in $Bytes){$sumA=[uint32](($sumA+[uint32]$v)%65521);$sumB=[uint32](($sumB+$sumA)%65521)}
+    return [uint32](([uint64]$sumB -shl 16) -bor [uint64]$sumA)
 }
 function Get-PackObjectId([string]$Type,[byte[]]$Data){
     $h=$script:Ascii.GetBytes($Type+' '+$Data.Length)
