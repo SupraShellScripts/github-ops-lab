@@ -68,5 +68,10 @@ try{
     Assert $rejected 'tampered .idx checksum refused'
     Write-Output ('PSGITLITE_PACK_PASS count='+$objects+' deltas='+$deltas.Count+' PowerShell='+$PSVersionTable.PSVersion)
 }finally{
-    if([IO.Directory]::Exists($root)){[IO.Directory]::Delete($root,$true)}
+    if([IO.Directory]::Exists($root)){
+        foreach($f in [IO.Directory]::EnumerateFiles($root,'*',[IO.SearchOption]::AllDirectories)){
+            [IO.File]::SetAttributes($f,[IO.FileAttributes]::Normal)
+        }
+        [IO.Directory]::Delete($root,$true)
+    }
 }
