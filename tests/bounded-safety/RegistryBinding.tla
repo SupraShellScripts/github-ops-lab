@@ -12,7 +12,7 @@ Rotate == /\ registry' = 1 - registry
 Execute == /\ grant # -1 /\ executions < 2
            /\ (Unsafe \/ (~consumed /\ registry = grant))
            /\ executions' = executions + 1 /\ consumed' = TRUE
-           /\ bindingViolation' = bindingViolation \/ registry # grant
+           /\ bindingViolation' = (bindingViolation \/ (registry # grant))
            /\ UNCHANGED <<registry, grant>>
 Next == Approve \/ Rotate \/ Execute
 Spec == Init /\ [][Next]_vars

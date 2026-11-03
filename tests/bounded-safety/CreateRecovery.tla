@@ -19,11 +19,11 @@ DriftRegistry == /\ registry' = 1 - registry
 Promote == /\ journal = "tested" /\ source /\ test /\ ~admitted
            /\ (Unsafe \/ (~altered /\ registry = 0))
            /\ admitted' = TRUE /\ journal' = "promoted"
-           /\ erasedAltered' = erasedAltered \/ altered \/ registry # 0
+           /\ erasedAltered' = (erasedAltered \/ altered \/ (registry # 0))
            /\ UNCHANGED <<source, test, altered, registry>>
 Recover == /\ journal \in {"source","tested"} /\ (Unsafe \/ ~altered)
            /\ source' = FALSE /\ test' = FALSE /\ journal' = "rolledback"
-           /\ erasedAltered' = erasedAltered \/ altered
+           /\ erasedAltered' = (erasedAltered \/ altered)
            /\ UNCHANGED <<altered, registry, admitted>>
 Next == CreateSource \/ CreateTest \/ Alter \/ DriftRegistry \/ Promote \/ Recover
 Spec == Init /\ [][Next]_vars
