@@ -46,7 +46,8 @@ finally{$hasher.Dispose()}
 $id=$doc.handoffId
 $requestId='handoff-'+$sha.Substring(0,20)
 $baton='Read AGENTS.md and continue the current AIrea51 handoff; verify current.json digest'
-$result=New-GitLiteDleCheckpoint -RepositoryPath $RepositoryPath -WorksetId $id -RequestId $requestId -StepId handoff-observe -Phase Observe -Status OBSERVED -Message ('Observed AIrea51 handoff pointer '+$id) -NextBaton $baton -ExpectedHead $ExpectedHead -ObservedEffect 'Handoff pointer read; verification/approval not inferred' -Actor handoff-observer -EvidenceRefs @('sha256:'+$sha,'local:agent-exchange/current.json')
+$evidence=[string[]]@(('sha256:'+$sha),'local:agent-exchange/current.json')
+$result=New-GitLiteDleCheckpoint -RepositoryPath $RepositoryPath -WorksetId $id -RequestId $requestId -StepId handoff-observe -Phase Observe -Status OBSERVED -Message ('Observed AIrea51 handoff pointer '+$id) -NextBaton $baton -ExpectedHead $ExpectedHead -ObservedEffect 'Handoff pointer read; verification/approval not inferred' -Actor handoff-observer -EvidenceRefs $evidence
 if($OutputFormat -eq 'Json'){
   Write-Output (ConvertTo-Json -InputObject ([ordered]@{handoffId=$id;handoffDigestSha256=$sha;
     head=$result.Head;replay=$result.Replay;status='OBSERVED';authority='OBSERVED_NOT_AUTHENTICATED';nextBaton=$baton}) -Depth 5 -Compress)
