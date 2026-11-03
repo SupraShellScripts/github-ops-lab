@@ -62,6 +62,7 @@ try{
     }finally{$env:PATH=$old}
     $shaBytes=[IO.File]::ReadAllBytes($idx[0])
     $shaBytes[$shaBytes.Length-1]=[byte]($shaBytes[$shaBytes.Length-1] -bxor 1)
+    [IO.File]::SetAttributes($idx[0],[IO.FileAttributes]::Normal)
     [IO.File]::WriteAllBytes($idx[0],$shaBytes)
     $rejected=$false
     try{$null=Get-GitLitePackedObject -RepositoryPath $root -Sha $first}catch{$rejected=$true}
