@@ -20,6 +20,7 @@ try{
     $null=Invoke-Oracle $root @('init','-b','main')
     $null=Invoke-Oracle $root @('config','user.email','synthetic@example.invalid')
     $null=Invoke-Oracle $root @('config','user.name','Synthetic Git Tester')
+    $null=Invoke-Oracle $root @('config','core.autocrlf','false')
     $p=[IO.Path]::Combine($root,'shared.txt')
     $b=[IO.Path]::Combine($root,'binary.bin')
     [IO.File]::WriteAllBytes($b,[byte[]]@(0,1,255,0,10,127,0,128))
