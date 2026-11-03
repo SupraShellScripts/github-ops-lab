@@ -1,0 +1,41 @@
+name: Public synthetic PowerShell agent seed toolbelt qualification
+on:
+  push:
+    branches:
+      - work/ps-seed-toolbelt-20261103
+    paths:
+      - 'tests/seed-toolbelt/**'
+      - '.github/workflows/seed-toolbelt-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seed-toolbelt-native-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-ps51:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Native PowerShell 5.1 synthetic seed tests
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'Requires PowerShell 5.1' }
+          .\tests\seed-toolbelt\Test-SeedToolbelt.ps1
+
+  linux-pwsh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Linux PowerShell synthetic seed tests
+        shell: pwsh
+        run: ./tests/seed-toolbelt/Test-SeedToolbelt.ps1
