@@ -40,6 +40,12 @@ jobs:
       - name: Native pack and delta oracle tests
         shell: powershell
         run: ./tests/psgitlite-native/Test-Pack.ps1
+      - name: Git object adversarial qualifications
+        shell: powershell
+        run: ./tests/psgitlite-native/Test-Adversarial.ps1
+      - name: Deterministic Git blob property cases
+        shell: powershell
+        run: ./tests/psgitlite-native/Test-Properties.ps1
       - name: DLE v1 prepare
         shell: powershell
         run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode prepare
@@ -140,6 +146,12 @@ jobs:
       - name: Native pack and delta oracle tests
         shell: pwsh
         run: ./tests/psgitlite-native/Test-Pack.ps1
+      - name: Git object adversarial qualifications
+        shell: pwsh
+        run: ./tests/psgitlite-native/Test-Adversarial.ps1
+      - name: Deterministic Git blob property cases
+        shell: pwsh
+        run: ./tests/psgitlite-native/Test-Properties.ps1
       - name: DLE v1 prepare
         shell: pwsh
         run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode prepare
