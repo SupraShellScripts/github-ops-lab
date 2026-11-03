@@ -39,6 +39,9 @@ jobs:
       - name: DLE adversarial tests
         shell: powershell
         run: .\tests\psgitlite-dle\Test-Dle.ps1 -Mode faults
+      - name: Human automation agent DLE facade
+        shell: powershell
+        run: .\tests\psgitlite-dle\Test-DleCli.ps1
 
   ubuntu-pwsh-dle-recovery:
     name: Linux PowerShell DLE / restart / negative
@@ -60,3 +63,6 @@ jobs:
       - name: DLE adversarial tests
         shell: pwsh
         run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode faults
+      - name: Human automation agent DLE facade
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleCli.ps1
