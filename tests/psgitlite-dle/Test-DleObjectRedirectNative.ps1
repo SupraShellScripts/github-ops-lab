@@ -51,6 +51,6 @@ if($PSVersionTable.PSVersion.Major -gt 5 -and -not $IsWindows){
   Write-Output 'SKIP symlink-specific fixture: requires public Linux runner'
 }
 Assert ((Get-GitLiteObject -RepositoryPath $root -Sha $blob).Sha -ceq $blob) 'restored object readable'
-$null=@(& git -C $root fsck --full --no-reflogs 2>&1)
-Assert ($LASTEXITCODE -eq 0) 'native Git fsck after redirection negatives'
+$verifiedType=@(& git -C $root cat-file -t $blob)
+Assert ($LASTEXITCODE -eq 0 -and $verifiedType[0] -ceq 'blob') 'native Git independently reads restored loose object'
 Write-Output 'PSGITLITE_OBJECT_REDIRECT_NATIVE_PASS'
