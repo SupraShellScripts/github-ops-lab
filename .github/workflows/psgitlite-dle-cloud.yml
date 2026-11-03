@@ -56,6 +56,9 @@ jobs:
       - name: DLE multilingual and hostile ref tests
         shell: powershell
         run: .\tests\psgitlite-dle\Test-DleSecurity.ps1
+      - name: Synthetic AIrea51 handoff observation
+        shell: powershell
+        run: .\tests\psgitlite-dle\Test-DleHandoff.ps1
       - name: Build source-only package
         shell: powershell
         run: .\tests\psgitlite-dle\Test-DlePackage.ps1 -Mode build
@@ -100,6 +103,9 @@ jobs:
       - name: DLE multilingual and hostile ref tests
         shell: pwsh
         run: ./tests/psgitlite-dle/Test-DleSecurity.ps1
+      - name: Synthetic AIrea51 handoff observation
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleHandoff.ps1
       - name: Build source-only package
         shell: pwsh
         run: ./tests/psgitlite-dle/Test-DlePackage.ps1 -Mode build
