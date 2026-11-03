@@ -161,7 +161,7 @@ function Read-DleCommit([string]$Root,[string]$Id){
     }
     if([string]$event.eventKind -ceq 'EXTERNAL_EFFECT'){
       Assert-DleId ([string]$event.effectId)
-    }elseif($event.effectId){throw 'DLE_V2_UNEXPECTED_EFFECT_ID'}
+    }elseif($null -ne $event.PSObject.Properties['effectId'] -and $event.effectId){throw 'DLE_V2_UNEXPECTED_EFFECT_ID'}
   }
   return [pscustomobject]@{Head=$Id;Parent=$parent;Tree=$tree;Event=$event;Checkpoint=$checkpoint;Baton=$items['baton.md']}
 }
