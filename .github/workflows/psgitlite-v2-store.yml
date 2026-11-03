@@ -1,0 +1,76 @@
+name: PSGitLite v2 Git-backed DLE store native qualification
+on:
+  push:
+    branches:
+      - work/psgitlite-v2-store-20261103
+    paths:
+      - 'tests/psgitlite-dle/**'
+      - '.github/workflows/psgitlite-v2-store.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: psgitlite-v2-store
+  cancel-in-progress: false
+jobs:
+  winps51_v2_store:
+    name: Windows PowerShell 5.1 v2 DLE
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Native PS5.1 preflight
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'WINPS5_REQUIRED' }
+          Write-Output $PSVersionTable.PSVersion
+      - name: Write v2 intent and unrelated checkpoint
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleV2Store.ps1 -Mode prepare
+      - name: Fresh process reconcile and verify v2 effect
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleV2Store.ps1 -Mode resume
+      - name: Downgrade and migration negative tests
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleV2Store.ps1 -Mode negative
+      - name: Regression v1 prepare
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode prepare
+      - name: Regression v1 fresh-process resume
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode resume
+      - name: Regression v1 fault negatives
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode faults
+
+  linux_v2_store:
+    name: Ubuntu PowerShell v2 DLE
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: PowerShell version
+        shell: pwsh
+        run: Write-Output $PSVersionTable.PSVersion
+      - name: Write v2 intent and unrelated checkpoint
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleV2Store.ps1 -Mode prepare
+      - name: Fresh process reconcile and verify v2 effect
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleV2Store.ps1 -Mode resume
+      - name: Downgrade and migration negative tests
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleV2Store.ps1 -Mode negative
+      - name: Regression v1 prepare
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode prepare
+      - name: Regression v1 fresh-process resume
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode resume
+      - name: Regression v1 fault negatives
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode faults
