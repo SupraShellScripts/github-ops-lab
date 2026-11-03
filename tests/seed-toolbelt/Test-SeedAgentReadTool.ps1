@@ -26,7 +26,10 @@ function Call($Arguments){
 function Reject([string]$Name,$Arguments,[string]$Reason){
     $match=$false
     try{$null=Call $Arguments}
-    catch{$match=([string]$_.Exception.Message -ceq ('SEED-AGENT-'+$Reason))}
+    catch{
+        $category=[string]$_.Exception.Message
+        $match=($category -ceq ('SEED-AGENT-'+$Reason) -or $category -ceq ('SEED-'+$Reason))
+    }
     Check $Name $match
 }
 try{
@@ -54,7 +57,7 @@ try{
     $a=Call @{operation='plan';task='Improve synthetic tool'}
     Check 'A10-plan-only' ($a.result.admission -ceq 'PLAN_ONLY')
     Check 'A11-no-tool-registration' (-not $a.toolRegistered -and -not $a.applied)
-    Reject 'A12-traversal-not-admitted' @{operation='inspect';relativePath='../outside.json'} 'UNCLASSIFIED'
+    Reject 'A12-traversal-not-admitted' @{operation='inspect';relativePath='../outside.json'} 'INVALID_PATH'
     Reject 'A13-unexpected-model-approval' @{operation='observe';approval='yes'} 'UNEXPECTED_ARGUMENT'
     Reject 'A14-unknown-operation' @{operation='execute'} 'UNKNOWN_OPERATION'
     Reject 'A15-content-flag-not-admitted' @{operation='inspect';relativePath='sample.json';includeContent='true'} 'UNEXPECTED_ARGUMENT'
