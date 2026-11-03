@@ -30,6 +30,7 @@ try{
         if($i -eq 0){$null=Invoke-Oracle $root @('add','binary.bin')}
         $null=Invoke-Oracle $root @('commit','-m',('synthetic-'+$i))
     }
+    $null=Invoke-Oracle $root @('branch','feature/synthetic')
     $null=Invoke-Oracle $root @('gc','--aggressive','--prune=now')
     $packDir=[IO.Path]::Combine($root,'.git','objects','pack')
     $idx=@([IO.Directory]::GetFiles($packDir,'*.idx'))
@@ -60,6 +61,18 @@ try{
         $read=Get-GitLitePackedObject -RepositoryPath $root -Sha $first
         Assert ($read.Sha -ceq $first) 'pack object works without git executable'
     }finally{$env:PATH=$old}
+    Import-Module (Join-Path $PSScriptRoot 'PSGitLiteRefs.psm1') -Force
+    $branches=@(Get-GitLiteBranches -RepositoryPath $root)
+    Assert ($branches.Count -eq 2 -and @($branches|Where-Object{$_.Current}).Count -eq 1) 'packed and loose branch refs recognized'
+    Assert (($branches | Where-Object{$_.Branch -eq 'feature/synthetic'}).Count -ge 1) 'feature branch listed'
+    $log=@(Get-GitLiteFirstParentLog -RepositoryPath $root -MaxCount 10)
+    $gitLog=@(Invoke-Oracle $root @('rev-list','--first-parent','--max-count=10','HEAD'))
+    Assert ($log.Count -eq 10 -and $gitLog.Count -eq 10) 'first-parent history count'
+    for($i=0;$i -lt 10;$i++){if($log[$i].Sha -cne $gitLog[$i]){throw 'Git first-parent history mismatch'}}
+    Assert $true 'first-parent SHA history matches native Git'
+    $rejected=$false
+    try{$null=@(Get-GitLiteFirstParentLog -RepositoryPath $root -Ref '../escape')}catch{$rejected=$true}
+    Assert $rejected 'malformed Git ref refused'
     $shaBytes=[IO.File]::ReadAllBytes($idx[0])
     $shaBytes[$shaBytes.Length-1]=[byte]($shaBytes[$shaBytes.Length-1] -bxor 1)
     [IO.File]::SetAttributes($idx[0],[IO.FileAttributes]::Normal)
