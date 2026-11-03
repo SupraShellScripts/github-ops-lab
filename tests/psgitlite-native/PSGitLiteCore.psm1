@@ -56,7 +56,7 @@ function New-GitLiteRepository {
 function New-GitLiteObject {
   [CmdletBinding()]param([Parameter(Mandatory)][string]$RepositoryPath,
     [Parameter(Mandatory)][ValidateSet('blob','tree','commit')][string]$Type,
-    [Parameter(Mandatory)][byte[]]$Payload)
+    [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Payload)
   if($Payload.Length -gt 33554432){throw 'Payload bound'}
   $repo=Assert-LiteRepo $RepositoryPath
   $prefix=$script:ascii.GetBytes("$Type $($Payload.Length)")
@@ -68,7 +68,14 @@ function New-GitLiteObject {
     $dest=[IO.Path]::Combine($dir,$id.Substring(2))
     Assert-LiteNoReparse $dir
     Assert-LiteNoReparse $dest
-    if([IO.File]::Exists($dest)){return $id}
+    if([IO.File]::Exists($dest)){
+      # A path at the correct SHA is not evidence that the stored compressed
+      # object remains intact. Re-read and verify before treating this as
+      # an idempotent object write.
+      $old=Get-GitLiteObject -RepositoryPath $repo.Root -Sha $id
+      if($old.Type -cne $Type){throw 'Existing object type mismatch'}
+      return $id
+    }
     [void][IO.Directory]::CreateDirectory($dir)
     $compressed=[IO.MemoryStream]::new()
     try{
