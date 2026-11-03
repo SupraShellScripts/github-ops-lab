@@ -161,10 +161,10 @@ function Get-PackInflated([byte[]]$B,[long]$Start,[long]$End){
         return ,$raw
     }finally{$stream.Dispose();$out.Dispose()}
 }
-function Read-PackAt([object]$C,[long]$Offset,[int]$Depth,[object]$Seen){
+function Read-PackAt([object]$Context,[long]$Offset,[int]$Depth,[object]$Seen){
     if($Depth -gt 32 -or -not $Seen.Add($Offset)){throw 'Pack delta recursion/cycle exceeded'}
     try{
-        $B=$C.Pack
+        $B=$Context.Pack
         [long]$pos=$Offset
         if($pos -ge $B.Length-20){throw 'Pack entry offset truncated'}
         [int]$c=$B[$pos];$pos++
@@ -193,15 +193,15 @@ function Read-PackAt([object]$C,[long]$Offset,[int]$Depth,[object]$Seen){
             $baseOffset=$Offset-$distance
         }elseif($type -eq 7){
             $baseOid=Get-PackHex (Get-PackSlice $B $pos 20);$pos+=20
-            if(-not $C.IdToOffset.ContainsKey($baseOid)){throw 'REF_DELTA base not in bounded pack'}
-            $baseOffset=$C.IdToOffset[$baseOid]
+            if(-not $Context.IdToOffset.ContainsKey($baseOid)){throw 'REF_DELTA base not in bounded pack'}
+            $baseOffset=$Context.IdToOffset[$baseOid]
         }elseif($type -notin @(1,2,3,4)){throw 'Unsupported Git packed object type'}
         $next=[long]($B.Length-20)
-        foreach($candidate in $C.OrderedOffsets){if($candidate -gt $Offset){$next=$candidate;break}}
+        foreach($candidate in $Context.OrderedOffsets){if($candidate -gt $Offset){$next=$candidate;break}}
         $data=Get-PackInflated $B $pos $next
         if($data.Length -ne $size){throw 'Packed entry inflated length mismatch'}
         if($type -in @(6,7)){
-            $base=Read-PackAt $C $baseOffset ($Depth+1) $Seen
+            $base=Read-PackAt $Context $baseOffset ($Depth+1) $Seen
             $typeName=$base.Type
             $data=Apply-PackDelta $base.Data $data
         }else{
