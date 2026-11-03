@@ -1,0 +1,37 @@
+name: Public synthetic seed document creation candidates
+on:
+  push:
+    branches:
+      - work/ps-seed-toolbelt-20261103
+    paths:
+      - 'tests/seed-toolbelt/SeedDocumentCandidates.psm1'
+      - 'tests/seed-toolbelt/Test-SeedDocumentCandidates.ps1'
+      - '.github/workflows/seed-document-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-ps51:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Native Windows PS5.1 document candidates
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'Requires PS5.1' }
+          .\tests\seed-toolbelt\Test-SeedDocumentCandidates.ps1
+  linux-pwsh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Native Linux pwsh document candidates
+        shell: pwsh
+        run: ./tests/seed-toolbelt/Test-SeedDocumentCandidates.ps1
