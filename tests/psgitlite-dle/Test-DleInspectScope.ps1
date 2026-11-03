@@ -32,6 +32,31 @@ try {
   foreach($name in $writers){
     Assert ($null -eq (Get-Command -Name $name -ErrorAction SilentlyContinue)) ('no writer leaked to caller: '+$name)
   }
+  $refused=$false
+  try{
+    $null=& $cli -RepositoryPath $repo -WorksetId '..' -Format Json
+  }catch{$refused=$true}
+  Assert $refused 'invalid workset rejected during observer'
+  foreach($name in $writers){
+    Assert ($null -eq (Get-Command -Name $name -ErrorAction SilentlyContinue)) ('no writer leaked after failed read: '+$name)
+  }
+  # When an embedding actor already owns the native DLE module, the observer
+  # must not remove that pre-existing module during normal or failed reads.
+  $modulePath=Join-Path $PSScriptRoot 'PSGitLiteDle.psm1'
+  Import-Module $modulePath -Force -ErrorAction Stop
+  $preloaded=Get-Module PSGitLiteDle
+  Assert ($null -ne $preloaded -and
+          $null -ne (Get-Command New-GitLiteDleCheckpoint -ErrorAction SilentlyContinue)) 'caller-owned DLE writer preloaded'
+  $got=(& $cli -RepositoryPath $repo -WorksetId v2demo -Format Json)|ConvertFrom-Json
+  Assert ($got.verdict -ceq 'CONTINUE_FROM_BATON') 'observer reads with caller-owned writer available'
+  Assert ($null -ne (Get-Command New-GitLiteDleCheckpoint -ErrorAction SilentlyContinue) -and
+          $null -ne (Get-Module PSGitLiteDle)) 'caller-owned writer retained after successful read'
+  $refused=$false
+  try{$null=& $cli -RepositoryPath $repo -WorksetId '..' -Format Json}catch{$refused=$true}
+  Assert $refused 'invalid workset still rejected with caller-owned writer'
+  Assert ($null -ne (Get-Command New-GitLiteDleCheckpoint -ErrorAction SilentlyContinue)) 'caller-owned writer retained after failed read'
+  Remove-Module PSGitLiteDle -Force -ErrorAction Stop
+  Remove-Module PSGitLiteCore -Force -ErrorAction SilentlyContinue
 }finally {
   $env:PATH=$oldPath
 }
