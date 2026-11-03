@@ -174,12 +174,95 @@ function New-GitLiteDleCheckpoint {
     [string]$IntendedEffect='',
     [string]$ObservedEffect='',
     [string]$Actor='synthetic-agent',
+    [string]$ApprovalRef='',
+    [string]$SourceRootDigest='',
     [string[]]$EvidenceRefs=@()
   )
   Assert-DleId $WorksetId;Assert-DleId $RequestId;Assert-DleId $StepId
   Assert-DleText $Message 4096;Assert-DleText $NextBaton 8192
   Assert-DleText $IntendedEffect 4096;Assert-DleText $ObservedEffect 4096
   Assert-DleText $Actor 128
+  Assert-DleText $ApprovalRef 256
+  if($SourceRootDigest -and $SourceRootDigest -cnotmatch '^[0-9a-f]{64} -cnotmatch '^[a-zA-Z0-9_.-]+$'){throw 'DLE_INVALID_ACTOR'}
+  if($EvidenceRefs.Count -gt 16){throw 'DLE_EVIDENCE_LIMIT'}
+  foreach($e in $EvidenceRefs){Assert-DleText $e 256}
+  if($ExpectedHead -and $ExpectedHead -cnotmatch '^[0-9a-f]{40}$'){throw 'DLE_INVALID_EXPECTED_HEAD'}
+  $request=[ordered]@{worksetId=$WorksetId;requestId=$RequestId;stepId=$StepId;
+    phase=$Phase;status=$Status;message=$Message;nextBaton=$NextBaton;
+    intendedEffect=$IntendedEffect;observedEffect=$ObservedEffect;actor=$Actor;
+    approvalRef=$ApprovalRef;sourceRootDigest=$SourceRootDigest;evidenceRefs=@($EvidenceRefs)}
+  $requestJson=ConvertTo-Json -InputObject $request -Depth 5 -Compress
+  $digest=Get-DleHash $script:utf8.GetBytes($requestJson)
+  $repo=Get-DleRepo $RepositoryPath
+  $ref=Get-DleRef $repo $WorksetId
+  $parent=Read-DleRef $ref
+  if($parent){$null=Read-DleCommit $repo.Root $parent}
+  if(($parent -ne $ExpectedHead) -and (-not (!$parent -and !$ExpectedHead))){
+    if($parent){
+      $old=Read-DleCommit $repo.Root $parent
+      if($old.Event.requestId -ceq $RequestId -and $old.Event.requestDigest -ceq $digest){
+        return [pscustomobject]@{Head=$parent;Parent=$old.Parent;Replay=$true;Status=$old.Event.status}
+      }
+    }
+    throw 'DLE_STALE_HEAD'
+  }
+  $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+  $cursor=$parent
+  for($i=0;$i -lt 128 -and $cursor;$i++){
+    if(!$seen.Add($cursor)){throw 'DLE_COMMIT_CYCLE'}
+    $old=Read-DleCommit $repo.Root $cursor
+    if($old.Event.worksetId -cne $WorksetId){throw 'DLE_WRONG_WORKSET'}
+    if($old.Event.requestId -ceq $RequestId){throw 'DLE_REQUEST_REPLAY'}
+    $cursor=$old.Parent
+  }
+  if($cursor){throw 'DLE_HISTORY_BOUND'}
+  $now=[DateTimeOffset]::UtcNow
+  $event=[ordered]@{schemaVersion='airea51.dle-event.v1';worksetId=$WorksetId;
+    requestId=$RequestId;requestDigest=$digest;stepId=$StepId;phase=$Phase;status=$Status;
+    message=$Message;nextBaton=$NextBaton;intendedEffect=$IntendedEffect;
+    observedEffect=$ObservedEffect;actor=$Actor;approvalRef=$ApprovalRef;
+    sourceRootDigest=$SourceRootDigest;evidenceRefs=@($EvidenceRefs);
+    createdUtc=$now.ToString('yyyy-MM-ddTHH:mm:ss.fffZ',[Globalization.CultureInfo]::InvariantCulture);
+    parentCommit=$parent}
+  $checkpoint=[ordered]@{schemaVersion='airea51.dle-checkpoint.v1';worksetId=$WorksetId;
+    requestId=$RequestId;status=$Status;stepId=$StepId;phase=$Phase;
+    previousCommit=$parent;requestDigest=$digest}
+  $eventJson=(ConvertTo-Json -InputObject $event -Depth 5 -Compress)+$script:lf
+  $checkpointJson=(ConvertTo-Json -InputObject $checkpoint -Depth 5 -Compress)+$script:lf
+  $tree=New-DleTree $repo.Root $NextBaton $checkpointJson $eventJson
+  $identity='AIrea51 DLE <airea51-dle@example.invalid> '+$now.ToUnixTimeSeconds()+' +0000'
+  $parents=if($parent){'parent '+$parent+$script:lf}else{''}
+  $body='tree '+$tree+$script:lf+$parents+'author '+$identity+$script:lf+
+    'committer '+$identity+$script:lf+$script:lf+'DLE checkpoint: '+$WorksetId+' '+$RequestId+$script:lf
+  $commit=New-GitLiteObject -RepositoryPath $repo.Root -Type commit -Payload ($script:utf8.GetBytes($body))
+  $validated=Read-DleCommit $repo.Root $commit
+  if($validated.Event.requestDigest -cne $digest){throw 'DLE_PRECOMMIT_INTEGRITY'}
+  $directory=[IO.Path]::GetDirectoryName($ref)
+  [void][IO.Directory]::CreateDirectory($directory)
+  $lock=$ref+'.lock'
+  $stream=[IO.FileStream]::new($lock,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+  try{
+    $actual=Read-DleRef $ref
+    if(($actual -ne $parent) -and (-not (!$actual -and !$parent))){throw 'DLE_STALE_HEAD'}
+    $newBytes=$script:ascii.GetBytes($commit+$script:lf)
+    $stream.Write($newBytes,0,$newBytes.Length)
+    $stream.Flush($true)
+    $stream.Dispose();$stream=$null
+    if([IO.File]::Exists($ref)){
+      $backup=$ref+'.backup-'+[guid]::NewGuid().ToString('N')
+      [IO.File]::Replace($lock,$ref,$backup)
+      if([IO.File]::Exists($backup)){[IO.File]::Delete($backup)}
+    }else{[IO.File]::Move($lock,$ref)}
+  }finally{
+    if($null -ne $stream){$stream.Dispose()}
+    if([IO.File]::Exists($lock)){[IO.File]::Delete($lock)}
+  }
+  $recheck=Get-GitLiteDleSnapshot -RepositoryPath $repo.Root -WorksetId $WorksetId
+  if($recheck.Head -cne $commit){throw 'DLE_POSTCOMMIT_INTEGRITY'}
+  return [pscustomobject]@{Head=$commit;Parent=$parent;Replay=$false;Status=$Status;RequestDigest=$digest}
+}
+Export-ModuleMember -Function Initialize-GitLiteDle,New-GitLiteDleCheckpoint,Get-GitLiteDleSnapshot,Get-GitLiteDleHistory
+){throw 'DLE_INVALID_SOURCE_DIGEST'}
   if($Actor -cnotmatch '^[a-zA-Z0-9_.-]+$'){throw 'DLE_INVALID_ACTOR'}
   if($EvidenceRefs.Count -gt 16){throw 'DLE_EVIDENCE_LIMIT'}
   foreach($e in $EvidenceRefs){Assert-DleText $e 256}
