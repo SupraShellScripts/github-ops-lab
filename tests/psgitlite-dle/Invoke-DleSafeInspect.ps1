@@ -48,7 +48,13 @@ switch($Format){
     Write-Output ('DLE '+$WorksetId+' verdict='+$out.verdict+' head='+$out.head)
     Write-Output ('Pending='+$pending.Count+' Failed='+$failures.Count+' Legacy='+$legacy.Count)
     Write-Output 'Auto-execute: DENIED'
-    if($out.nextBaton){Write-Output ('Next baton: '+$out.nextBaton)}
+    if($out.nextBaton){
+      # Baton content is read from a Git object, not an instruction or grant.
+      # Render it as one escaped JSON string so CR/LF/ANSI controls cannot
+      # forge additional human-facing status lines.
+      $quoted=ConvertTo-Json -InputObject ([string]$out.nextBaton) -Compress
+      Write-Output ('Next baton (untrusted, escaped): '+$quoted)
+    }
   }
   'Json' {Write-Output (ConvertTo-Json -InputObject $out -Depth 8 -Compress)}
   'Jsonl' {Write-Output (ConvertTo-Json -InputObject $out -Depth 8 -Compress)}
