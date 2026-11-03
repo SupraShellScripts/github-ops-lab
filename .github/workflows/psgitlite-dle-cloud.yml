@@ -1,0 +1,62 @@
+name: PSGitLite DLE checkpoint and crash recovery qualification
+on:
+  push:
+    branches:
+      - work/psgitlite-dle-cloud-20261103
+    paths:
+      - 'tests/psgitlite-dle/**'
+      - 'tests/psgitlite-native/PSGitLiteCore.psm1'
+      - '.github/workflows/psgitlite-dle-cloud.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: psgitlite-dle-cloud
+  cancel-in-progress: false
+
+jobs:
+  winps51-dle-recovery:
+    name: Windows PowerShell 5.1 local DLE / restart / negative
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Preflight PowerShell 5.1
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'Expected Windows PowerShell 5' }
+          Write-Output ('Native Windows PowerShell ' + $PSVersionTable.PSVersion)
+      - name: DLE prepare checkpoint and pending action
+        shell: powershell
+        run: .\tests\psgitlite-dle\Test-Dle.ps1 -Mode prepare
+      - name: DLE reopen in a fresh interpreter and reconcile
+        shell: powershell
+        run: .\tests\psgitlite-dle\Test-Dle.ps1 -Mode resume
+      - name: DLE adversarial tests
+        shell: powershell
+        run: .\tests\psgitlite-dle\Test-Dle.ps1 -Mode faults
+
+  ubuntu-pwsh-dle-recovery:
+    name: Linux PowerShell DLE / restart / negative
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Preflight PowerShell Core
+        shell: pwsh
+        run: Write-Output ('Native Linux PowerShell ' + $PSVersionTable.PSVersion)
+      - name: DLE prepare checkpoint and pending action
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode prepare
+      - name: DLE reopen in a fresh interpreter and reconcile
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode resume
+      - name: DLE adversarial tests
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode faults
