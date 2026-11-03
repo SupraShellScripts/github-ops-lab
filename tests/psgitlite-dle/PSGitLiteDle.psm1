@@ -144,8 +144,9 @@ function Read-DleCommit([string]$Root,[string]$Id){
   $items=Read-DleTree $Root $tree
   $event=$items['event.json']|ConvertFrom-Json
   $checkpoint=$items['checkpoint.json']|ConvertFrom-Json
-  if($event.schemaVersion -cne 'airea51.dle-event.v1' -or
-     $checkpoint.schemaVersion -cne 'airea51.dle-checkpoint.v1' -or
+  $validVersion=($event.schemaVersion -cin @('airea51.dle-event.v1','airea51.dle-event.v2'))
+  $checkVersion=if($event.schemaVersion -ceq 'airea51.dle-event.v2'){'airea51.dle-checkpoint.v2'}else{'airea51.dle-checkpoint.v1'}
+  if(!$validVersion -or $checkpoint.schemaVersion -cne $checkVersion -or
      $event.parentCommit -cne $parent -or $checkpoint.previousCommit -cne $parent -or
      $event.requestId -cne $checkpoint.requestId -or
      $event.worksetId -cne $checkpoint.worksetId -or
@@ -153,6 +154,14 @@ function Read-DleCommit([string]$Root,[string]$Id){
      $event.status -cne $checkpoint.status -or
      $event.nextBaton -cne $items['baton.md']){
     throw 'DLE_INCONSISTENT_CHECKPOINT'
+  }
+  if($event.schemaVersion -ceq 'airea51.dle-event.v2'){
+    if([string]$event.eventKind -cnotin @('EXTERNAL_EFFECT','PASSIVE_OBSERVATION','DECISION','CHECKPOINT')){
+      throw 'DLE_V2_INVALID_EVENT_KIND'
+    }
+    if([string]$event.eventKind -ceq 'EXTERNAL_EFFECT'){
+      Assert-DleId ([string]$event.effectId)
+    }elseif($event.effectId){throw 'DLE_V2_UNEXPECTED_EFFECT_ID'}
   }
   return [pscustomobject]@{Head=$Id;Parent=$parent;Tree=$tree;Event=$event;Checkpoint=$checkpoint;Baton=$items['baton.md']}
 }
@@ -190,6 +199,9 @@ function Get-GitLiteDleSnapshot {
   $recovery=if($record.Event.status -in @('INTENT','OBSERVED','UNKNOWN')){'RECONCILE_REQUIRED'}
             elseif($record.Event.status -ceq 'FAILED'){'DIAGNOSE_FIRST_FAILURE'}
             else{'CONTINUE_FROM_BATON'}
+  # Versioned v2 events require the correlated full-history assessor.  The
+  # legacy head-only API must never grant a resume based on last status.
+  if($record.Event.schemaVersion -ceq 'airea51.dle-event.v2'){$recovery='ASSESSMENT_REQUIRED'}
   if($hasLock){$recovery='LOCK_RECONCILE_REQUIRED'}
   return [pscustomobject]@{WorksetId=$WorksetId;Head=$head;Parent=$record.Parent;
     Status=$record.Event.status;Recovery=$recovery;LockPresent=$hasLock;
@@ -224,7 +236,10 @@ function New-GitLiteDleCheckpoint {
     [string]$Actor='synthetic-agent',
     [string]$ApprovalRef='',
     [string]$SourceRootDigest='',
-    [string[]]$EvidenceRefs=@()
+    [string[]]$EvidenceRefs=@(),
+    [ValidateSet('v1','v2')][string]$SchemaVariant='v1',
+    [ValidateSet('EXTERNAL_EFFECT','PASSIVE_OBSERVATION','DECISION','CHECKPOINT')][string]$EventKind='CHECKPOINT',
+    [string]$EffectId=''
   )
   Assert-DleId $WorksetId;Assert-DleId $RequestId;Assert-DleId $StepId
   Assert-DleText $Message 4096;Assert-DleText $NextBaton 8192
@@ -236,16 +251,46 @@ function New-GitLiteDleCheckpoint {
   if($EvidenceRefs.Count -gt 16){throw 'DLE_EVIDENCE_LIMIT'}
   foreach($e in $EvidenceRefs){Assert-DleText $e 256}
   if($ExpectedHead -and $ExpectedHead -cnotmatch '^[0-9a-f]{40}$'){throw 'DLE_INVALID_EXPECTED_HEAD'}
+  if($SchemaVariant -ceq 'v2'){
+    if($EventKind -ceq 'EXTERNAL_EFFECT'){Assert-DleId $EffectId}
+    elseif($EffectId){throw 'DLE_V2_UNEXPECTED_EFFECT_ID'}
+    if($EventKind -cne 'EXTERNAL_EFFECT' -and $Status -in @('INTENT','UNKNOWN')){
+      throw 'DLE_V2_NON_EFFECT_AMBIGUOUS'
+    }
+    if($EventKind -ceq 'EXTERNAL_EFFECT' -and $Status -ceq 'INTENT' -and $Phase -cne 'Apply'){
+      throw 'DLE_V2_INTENT_PHASE_DENIED'
+    }
+    if($EventKind -ceq 'EXTERNAL_EFFECT' -and $Status -ceq 'VERIFIED' -and
+        ($Phase -cnotin @('Verify','Reconcile') -or $EvidenceRefs.Count -eq 0)){
+      throw 'DLE_V2_INVALID_VERIFICATION'
+    }
+    if(-not [IO.File]::Exists((Join-Path $PSScriptRoot 'PSGitLiteRecoveryV2.psm1'))){
+      throw 'DLE_V2_ASSESSOR_UNAVAILABLE'
+    }
+  }
   $request=[ordered]@{worksetId=$WorksetId;requestId=$RequestId;stepId=$StepId;
     phase=$Phase;status=$Status;message=$Message;nextBaton=$NextBaton;
     intendedEffect=$IntendedEffect;observedEffect=$ObservedEffect;actor=$Actor;
     approvalRef=$ApprovalRef;sourceRootDigest=$SourceRootDigest;evidenceRefs=@($EvidenceRefs)}
+  if($SchemaVariant -ceq 'v2'){
+    $request.schemaVersion='airea51.dle-event.v2'
+    $request.eventKind=$EventKind
+    if($EventKind -ceq 'EXTERNAL_EFFECT'){$request.effectId=$EffectId}
+  }
   $requestJson=ConvertTo-Json -InputObject $request -Depth 5 -Compress
   $digest=Get-DleHash $script:utf8.GetBytes($requestJson)
   $repo=Get-DleRepo $RepositoryPath
   $ref=Get-DleRef $repo $WorksetId
   $parent=Read-DleRef $ref
-  if($parent){$null=Read-DleCommit $repo.Root $parent}
+  if($parent){
+    $parentRecord=Read-DleCommit $repo.Root $parent
+    if($SchemaVariant -ceq 'v1' -and $parentRecord.Event.schemaVersion -ceq 'airea51.dle-event.v2'){
+      throw 'DLE_V2_DOWNGRADE_REFUSED'
+    }
+    if($SchemaVariant -ceq 'v2' -and $parentRecord.Event.schemaVersion -cne 'airea51.dle-event.v2'){
+      throw 'DLE_V1_TO_V2_MIGRATION_NOT_ADMITTED'
+    }
+  }
   if(($parent -ne $ExpectedHead) -and (-not (!$parent -and !$ExpectedHead))){
     if($parent){
       $old=Read-DleCommit $repo.Root $parent
@@ -273,9 +318,31 @@ function New-GitLiteDleCheckpoint {
     sourceRootDigest=$SourceRootDigest;evidenceRefs=@($EvidenceRefs);
     createdUtc=$now.ToString('yyyy-MM-ddTHH:mm:ss.fffZ',[Globalization.CultureInfo]::InvariantCulture);
     parentCommit=$parent}
+  if($SchemaVariant -ceq 'v2'){
+    $event.schemaVersion='airea51.dle-event.v2'
+    $event.eventKind=$EventKind
+    if($EventKind -ceq 'EXTERNAL_EFFECT'){$event.effectId=$EffectId}
+    # Validate the proposed append against the complete prior v2 sequence.
+    # This is an admission check, not a source-change approval or grant.
+    Import-Module (Join-Path $PSScriptRoot 'PSGitLiteRecoveryV2.psm1') -ErrorAction Stop
+    $history=New-Object Collections.ArrayList
+    $walk=$parent
+    while($walk){
+      $previous=Read-DleCommit $repo.Root $walk
+      if($previous.Event.schemaVersion -cne 'airea51.dle-event.v2'){
+        throw 'DLE_V1_TO_V2_MIGRATION_NOT_ADMITTED'
+      }
+      [void]$history.Add($previous.Event)
+      $walk=$previous.Parent
+    }
+    $history.Reverse()
+    [void]$history.Add([pscustomobject]$event)
+    $null=Get-PSGitLiteRecoveryDecision -Events @($history.ToArray())
+  }
   $checkpoint=[ordered]@{schemaVersion='airea51.dle-checkpoint.v1';worksetId=$WorksetId;
     requestId=$RequestId;status=$Status;stepId=$StepId;phase=$Phase;
     previousCommit=$parent;requestDigest=$digest}
+  if($SchemaVariant -ceq 'v2'){$checkpoint.schemaVersion='airea51.dle-checkpoint.v2'}
   $eventJson=(ConvertTo-Json -InputObject $event -Depth 5 -Compress)+$script:lf
   $checkpointJson=(ConvertTo-Json -InputObject $checkpoint -Depth 5 -Compress)+$script:lf
   $tree=New-DleTree $repo.Root $NextBaton $checkpointJson $eventJson
