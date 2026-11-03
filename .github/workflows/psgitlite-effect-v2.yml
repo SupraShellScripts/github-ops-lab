@@ -1,43 +1,53 @@
-name: PSGitLite v2 recovery public native qualification
+name: PSGitLite v2 effect recovery native qualification
 on:
   push:
     branches:
       - work/psgitlite-effect-v2-20261103
     paths:
-      - 'tests/psgitlite-dle/PSGitLiteRecoveryV2.psm1'
-      - 'tests/psgitlite-dle/Test-PSGitLiteRecoveryV2.ps1'
-      - 'tests/psgitlite-dle/Test-PSGitLiteRecoveryLegacy.ps1'
+      - 'tests/psgitlite-dle/**'
       - '.github/workflows/psgitlite-effect-v2.yml'
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
   group: psgitlite-effect-v2
   cancel-in-progress: false
 jobs:
-  native-effect-correlation:
-    name: native v2 recovery semantics
-    runs-on: ${{ matrix.os }}
+  windows_native:
+    name: windows-2022 synthetic qualification
+    runs-on: windows-2022
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-2022
-            shell: powershell
-          - os: ubuntu-24.04
-            shell: pwsh
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - name: Verify PowerShell runtime
-        shell: ${{ matrix.shell }}
+      - name: Verify runtime
+        shell: powershell
         run: |
           Write-Output ('PS version='+$PSVersionTable.PSVersion.ToString())
           if ($env:RUNNER_OS -eq 'Windows' -and $PSVersionTable.PSVersion.Major -ne 5) { throw 'WINPS5_REQUIRED' }
-      - name: Direct v2 effect-correlation semantics
-        shell: ${{ matrix.shell }}
+      - name: Test-PSGitLiteRecoveryV2.ps1
+        shell: powershell
         run: ./tests/psgitlite-dle/Test-PSGitLiteRecoveryV2.ps1
-      - name: v1 Git history fail-closed compatibility
-        shell: ${{ matrix.shell }}
+      - name: Test-PSGitLiteRecoveryLegacy.ps1
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-PSGitLiteRecoveryLegacy.ps1
+  linux_native:
+    name: ubuntu-24.04 synthetic qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify runtime
+        shell: pwsh
+        run: |
+          Write-Output ('PS version='+$PSVersionTable.PSVersion.ToString())
+          if ($env:RUNNER_OS -eq 'Windows' -and $PSVersionTable.PSVersion.Major -ne 5) { throw 'WINPS5_REQUIRED' }
+      - name: Test-PSGitLiteRecoveryV2.ps1
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-PSGitLiteRecoveryV2.ps1
+      - name: Test-PSGitLiteRecoveryLegacy.ps1
+        shell: pwsh
         run: ./tests/psgitlite-dle/Test-PSGitLiteRecoveryLegacy.ps1
