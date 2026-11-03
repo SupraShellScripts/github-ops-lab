@@ -62,6 +62,14 @@ function Get-DleRef([object]$Repo,[string]$WorksetId){
   $dle=[IO.Path]::Combine($area,'dle')
   $target=[IO.Path]::Combine($dle,$WorksetId)
   foreach($path in @($refs,$area,$dle,$target)){Assert-DleNoReparse $path}
+  if([IO.Directory]::Exists($dle)){
+    foreach($candidate in [IO.Directory]::EnumerateFileSystemEntries($dle)){
+      $name=[IO.Path]::GetFileName($candidate)
+      if($name -cne $WorksetId -and $name.Equals($WorksetId,[StringComparison]::OrdinalIgnoreCase)){
+        throw 'DLE_REF_CASE_COLLISION'
+      }
+    }
+  }
   return $target
 }
 function Read-DleRef([string]$Path){
@@ -148,19 +156,44 @@ function Read-DleCommit([string]$Root,[string]$Id){
   }
   return [pscustomobject]@{Head=$Id;Parent=$parent;Tree=$tree;Event=$event;Checkpoint=$checkpoint;Baton=$items['baton.md']}
 }
+function Assert-DleHistory([string]$Root,[string]$Head,[string]$WorksetId) {
+  $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+  $requests=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+  $cursor=$Head
+  [int]$count=0
+  while($cursor){
+    if($count -ge 128){throw 'DLE_HISTORY_BOUND'}
+    if(!$seen.Add($cursor)){throw 'DLE_COMMIT_CYCLE'}
+    $entry=Read-DleCommit $Root $cursor
+    if($entry.Event.worksetId -cne $WorksetId){throw 'DLE_WRONG_WORKSET'}
+    if([string]::IsNullOrWhiteSpace($entry.Event.requestId) -or
+       !$requests.Add([string]$entry.Event.requestId)){throw 'DLE_REQUEST_REPLAY'}
+    $cursor=$entry.Parent
+    $count++
+  }
+  return $count
+}
 function Get-GitLiteDleSnapshot {
   [CmdletBinding()]param([Parameter(Mandatory)][string]$RepositoryPath,
     [Parameter(Mandatory)][string]$WorksetId)
   $repo=Get-DleRepo $RepositoryPath
-  $head=Read-DleRef (Get-DleRef $repo $WorksetId)
-  if(!$head){return [pscustomobject]@{WorksetId=$WorksetId;Head=$null;Status='EMPTY';Recovery='CREATE_CHECKPOINT'}}
+  $ref=Get-DleRef $repo $WorksetId
+  $head=Read-DleRef $ref
+  $hasLock=[IO.File]::Exists($ref+'.lock')
+  if(!$head){
+    $next=if($hasLock){'LOCK_RECONCILE_REQUIRED'}else{'CREATE_CHECKPOINT'}
+    return [pscustomobject]@{WorksetId=$WorksetId;Head=$null;Status='EMPTY';Recovery=$next;LockPresent=$hasLock}
+  }
+  $null=Assert-DleHistory $repo.Root $head $WorksetId
   $record=Read-DleCommit $repo.Root $head
   if($record.Event.worksetId -cne $WorksetId){throw 'DLE_WRONG_WORKSET'}
   $recovery=if($record.Event.status -in @('INTENT','OBSERVED','UNKNOWN')){'RECONCILE_REQUIRED'}
             elseif($record.Event.status -ceq 'FAILED'){'DIAGNOSE_FIRST_FAILURE'}
             else{'CONTINUE_FROM_BATON'}
+  if($hasLock){$recovery='LOCK_RECONCILE_REQUIRED'}
   return [pscustomobject]@{WorksetId=$WorksetId;Head=$head;Parent=$record.Parent;
-    Status=$record.Event.status;Recovery=$recovery;NextBaton=$record.Baton;Event=$record.Event}
+    Status=$record.Event.status;Recovery=$recovery;LockPresent=$hasLock;
+    NextBaton=$record.Baton;Event=$record.Event}
 }
 function Get-GitLiteDleHistory {
   [CmdletBinding()]param([Parameter(Mandatory)][string]$RepositoryPath,
