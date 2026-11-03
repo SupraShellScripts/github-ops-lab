@@ -65,7 +65,7 @@ try{
     Import-Module (Join-Path $PSScriptRoot 'PSGitLiteRefs.psm1') -Force
     $branches=@(Get-GitLiteBranches -RepositoryPath $root)
     Assert ($branches.Count -eq 2 -and @($branches|Where-Object{$_.Current}).Count -eq 1) 'packed and loose branch refs recognized'
-    Assert (($branches | Where-Object{$_.Branch -eq 'feature/synthetic'}).Count -ge 1) 'feature branch listed'
+    Assert (@($branches | Where-Object{$_.Branch -eq 'feature/synthetic'}).Count -ge 1) 'feature branch listed'
     $log=@(Get-GitLiteFirstParentLog -RepositoryPath $root -MaxCount 10)
     $gitLog=@(& git -C $root rev-list --first-parent --max-count=10 HEAD)
     if($LASTEXITCODE -ne 0){throw 'Independent Git log oracle failed'}
