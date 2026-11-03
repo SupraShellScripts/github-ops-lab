@@ -53,6 +53,9 @@ jobs:
       - name: Independent concurrent writer CAS
         shell: powershell
         run: .\tests\psgitlite-dle\Test-DleConcurrency.ps1
+      - name: DLE multilingual and hostile ref tests
+        shell: powershell
+        run: .\tests\psgitlite-dle\Test-DleSecurity.ps1
       - name: Build source-only package
         shell: powershell
         run: .\tests\psgitlite-dle\Test-DlePackage.ps1 -Mode build
@@ -94,6 +97,9 @@ jobs:
       - name: Independent concurrent writer CAS
         shell: pwsh
         run: ./tests/psgitlite-dle/Test-DleConcurrency.ps1
+      - name: DLE multilingual and hostile ref tests
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleSecurity.ps1
       - name: Build source-only package
         shell: pwsh
         run: ./tests/psgitlite-dle/Test-DlePackage.ps1 -Mode build
