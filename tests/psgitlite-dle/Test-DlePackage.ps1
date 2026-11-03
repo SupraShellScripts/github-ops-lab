@@ -12,7 +12,9 @@ $files=@(
   'psgitlite-native/PSGitLiteCore.psm1',
   'psgitlite-dle/PSGitLiteDle.psm1',
   'psgitlite-dle/Invoke-GitLiteDle.ps1',
-  'psgitlite-dle/Invoke-DleHandoffObserve.ps1'
+  'psgitlite-dle/Invoke-DleHandoffObserve.ps1',
+  'psgitlite-dle/PSGitLiteRecoveryV2.psm1',
+  'psgitlite-dle/Invoke-DleSafeInspect.ps1'
 )
 if($Mode -eq 'build'){
   if([IO.Directory]::Exists($root)){throw 'DLE_PACKAGE_ALREADY_EXISTS'}
@@ -27,7 +29,7 @@ if($Mode -eq 'build'){
     $size=([IO.FileInfo]::new($dest)).Length
     $spec+=@([ordered]@{path=$relative.Replace('\','/');sha256=$hash;bytes=$size})
   }
-  $manifest=[ordered]@{schemaVersion='psgitlite.dle-distribution.v1';
+  $manifest=[ordered]@{schemaVersion='psgitlite.dle-distribution.v2';
     runtime='Windows PowerShell 5.1 or PowerShell 7';
     nativeGitRequired=$false;networkRequired=$false;adminRequired=$false;
     files=$spec}
@@ -39,7 +41,7 @@ if($Mode -eq 'build'){
 else{
   $manifestPath=Join-Path $root 'manifest.json'
   $manifest=[IO.File]::ReadAllText($manifestPath)|ConvertFrom-Json
-  Assert ($manifest.schemaVersion -ceq 'psgitlite.dle-distribution.v1' -and $manifest.files.Count -eq 4) 'clean package manifest schema'
+  Assert ($manifest.schemaVersion -ceq 'psgitlite.dle-distribution.v2' -and $manifest.files.Count -eq 6) 'clean package manifest schema'
   foreach($file in $manifest.files){
     $path=[IO.Path]::Combine($root,$file.path.Replace('/',[IO.Path]::DirectorySeparatorChar))
     $hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -57,6 +59,18 @@ else{
     Assert ($result.Head -cmatch '^[0-9a-f]{40}$') 'packaged module commits checkpoint'
     $snapshot=(& $cli -Command Inspect -RepositoryPath $target -WorksetId install -OutputFormat Json)|ConvertFrom-Json
     Assert ($snapshot.Head -ceq $result.Head -and $snapshot.Recovery -ceq 'CONTINUE_FROM_BATON') 'clean-room module verifies checkpoint without Git'
+    $module=Join-Path $root 'psgitlite-dle/PSGitLiteDle.psm1'
+    $safeCli=Join-Path $root 'psgitlite-dle/Invoke-DleSafeInspect.ps1'
+    Import-Module $module -Force
+    $targetV2=Join-Path $env:RUNNER_TEMP 'psgitlite-v2-cleanroom'
+    $null=Initialize-GitLiteDle -RepositoryPath $targetV2
+    $intent=New-GitLiteDleCheckpoint -RepositoryPath $targetV2 -WorksetId packagedv2 -RequestId pkg-intent -StepId syntheticeffect -Phase Apply -Status INTENT -Message 'synthetic packaged v2 intent' -NextBaton 'reconcile synthetic fixture' -SchemaVariant v2 -EventKind EXTERNAL_EFFECT -EffectId pkg-effect
+    $unresolved=(& $safeCli -RepositoryPath $targetV2 -WorksetId packagedv2 -Format Json)|ConvertFrom-Json
+    Assert ($unresolved.verdict -ceq 'RECONCILE_REQUIRED' -and !$unresolved.autoReexecuteAllowed) 'packaged v2 full-history assessor refuses pending effect'
+    $verified=New-GitLiteDleCheckpoint -RepositoryPath $targetV2 -WorksetId packagedv2 -RequestId pkg-verified -StepId syntheticeffect -Phase Verify -Status VERIFIED -Message 'synthetic packaged verification' -NextBaton 'continue checked synthetic work' -ExpectedHead $intent.Head -SchemaVariant v2 -EventKind EXTERNAL_EFFECT -EffectId pkg-effect -EvidenceRefs @('fixture:synthetic-verified')
+    $resolved=(& $safeCli -RepositoryPath $targetV2 -WorksetId packagedv2 -Format Json)|ConvertFrom-Json
+    Assert ($resolved.verdict -ceq 'CONTINUE_FROM_BATON' -and $resolved.head -ceq $verified.Head -and !$resolved.autoReexecuteAllowed) 'packaged v2 effectId verification and safe read'
+
   }finally{$env:PATH=$oldPath}
   Write-Output 'PSGITLITE_DLE_PACKAGE_SMOKE_PASS'
 }
