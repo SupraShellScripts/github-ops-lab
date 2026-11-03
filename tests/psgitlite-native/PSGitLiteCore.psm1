@@ -61,8 +61,11 @@ function New-GitLiteObject {
     if([IO.File]::Exists($dest)){
       # A matching path is not proof that its bytes are a valid Git object.
       $prior=Get-GitLiteObject -RepositoryPath $RepositoryPath -Sha $id
-      if($prior.Type -cne $Type -or -not [Linq.Enumerable]::SequenceEqual([byte[]]$prior.Data,[byte[]]$Payload)){
+      if($prior.Type -cne $Type -or $prior.Data.Length -ne $Payload.Length){
         throw 'Existing object bytes do not match requested payload'
+      }
+      for($i=0;$i -lt $Payload.Length;$i++){
+        if($prior.Data[$i] -ne $Payload[$i]){throw 'Existing object bytes do not match requested payload'}
       }
       return $id
     }
