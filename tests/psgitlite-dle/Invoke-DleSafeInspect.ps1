@@ -13,8 +13,8 @@
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-Import-Module (Join-Path $PSScriptRoot 'PSGitLiteDle.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'PSGitLiteRecoveryV2.psm1')
+Import-Module (Join-Path $PSScriptRoot 'PSGitLiteDle.psm1') -Force -Scope Local
+Import-Module (Join-Path $PSScriptRoot 'PSGitLiteRecoveryV2.psm1') -Scope Local
 $decision=Get-PSGitLiteDleSafeResume -RepositoryPath $RepositoryPath -WorksetId $WorksetId
 $assessment=$decision.Assessment
 $pending=@()
