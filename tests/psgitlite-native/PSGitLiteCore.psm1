@@ -48,7 +48,7 @@ function New-GitLiteRepository {
 function New-GitLiteObject {
   [CmdletBinding()]param([Parameter(Mandatory)][string]$RepositoryPath,
     [Parameter(Mandatory)][ValidateSet('blob','tree','commit')][string]$Type,
-    [Parameter(Mandatory)][byte[]]$Payload)
+    [Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Payload)
   if($Payload.Length -gt 33554432){throw 'Payload bound'}
   $repo=Assert-LiteRepo $RepositoryPath
   $prefix=$script:ascii.GetBytes("$Type $($Payload.Length)")
@@ -58,7 +58,14 @@ function New-GitLiteObject {
     $raw=$ms.ToArray();$id=Get-LiteSha $raw
     $dir=[IO.Path]::Combine($repo.Git,'objects',$id.Substring(0,2))
     $dest=[IO.Path]::Combine($dir,$id.Substring(2))
-    if([IO.File]::Exists($dest)){return $id}
+    if([IO.File]::Exists($dest)){
+      # A matching path is not proof that its bytes are a valid Git object.
+      $prior=Get-GitLiteObject -RepositoryPath $RepositoryPath -Sha $id
+      if($prior.Type -cne $Type -or -not [Linq.Enumerable]::SequenceEqual([byte[]]$prior.Data,[byte[]]$Payload)){
+        throw 'Existing object bytes do not match requested payload'
+      }
+      return $id
+    }
     [void][IO.Directory]::CreateDirectory($dir)
     $compressed=[IO.MemoryStream]::new()
     try{
