@@ -42,6 +42,14 @@ jobs:
       - name: Human automation agent DLE facade
         shell: powershell
         run: .\tests\psgitlite-dle\Test-DleCli.ps1
+      - name: Inject hard kill after Git ref lock flush (expected failure)
+        id: hardkill
+        shell: powershell
+        continue-on-error: true
+        run: .\tests\psgitlite-dle\Test-DleCrash.ps1 -Mode interrupt
+      - name: Verify stale-lock recovery in fresh process
+        shell: powershell
+        run: .\tests\psgitlite-dle\Test-DleCrash.ps1 -Mode recover
 
   ubuntu-pwsh-dle-recovery:
     name: Linux PowerShell DLE / restart / negative
@@ -66,3 +74,11 @@ jobs:
       - name: Human automation agent DLE facade
         shell: pwsh
         run: ./tests/psgitlite-dle/Test-DleCli.ps1
+      - name: Inject hard kill after Git ref lock flush (expected failure)
+        id: hardkill
+        shell: pwsh
+        continue-on-error: true
+        run: ./tests/psgitlite-dle/Test-DleCrash.ps1 -Mode interrupt
+      - name: Verify stale-lock recovery in fresh process
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleCrash.ps1 -Mode recover
