@@ -1,0 +1,43 @@
+name: PSGitLite v2 clean-room PowerShell package qualification
+on:
+  push:
+    branches:
+      - work/psgitlite-v2-package-20261103
+    paths:
+      - 'tests/psgitlite-dle/Test-DlePackage.ps1'
+      - '.github/workflows/psgitlite-v2-package.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: psgitlite-v2-package
+  cancel-in-progress: false
+jobs:
+  windows_v2_distribution:
+    name: WinPS5.1 v2 source-only deployment
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Build SHA256 source-only manifest
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DlePackage.ps1 -Mode build
+      - name: Cleanroom no-Git v1 and v2 smoke
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DlePackage.ps1 -Mode smoke
+  linux_v2_distribution:
+    name: Linux pwsh v2 source-only deployment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Build SHA256 source-only manifest
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DlePackage.ps1 -Mode build
+      - name: Cleanroom no-Git v1 and v2 smoke
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DlePackage.ps1 -Mode smoke
