@@ -59,6 +59,9 @@ jobs:
       - name: Deep ancestor and stale-lock hardening negative
         shell: powershell
         run: .\tests\psgitlite-dle\Test-DleDeepNegative.ps1
+      - name: Legacy v1 whole-history strict resume
+        shell: powershell
+        run: .\tests\psgitlite-dle\Test-DleStrictResume.ps1
       - name: Synthetic AIrea51 handoff observation
         shell: powershell
         run: .\tests\psgitlite-dle\Test-DleHandoff.ps1
@@ -109,6 +112,9 @@ jobs:
       - name: Deep ancestor and stale-lock hardening negative
         shell: pwsh
         run: ./tests/psgitlite-dle/Test-DleDeepNegative.ps1
+      - name: Legacy v1 whole-history strict resume
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleStrictResume.ps1
       - name: Synthetic AIrea51 handoff observation
         shell: pwsh
         run: ./tests/psgitlite-dle/Test-DleHandoff.ps1
