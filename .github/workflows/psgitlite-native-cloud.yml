@@ -4,6 +4,7 @@ on:
     branches:
       - work/psgitlite-native-cloud-20261103
       - work/psgitlite-adversarial-20261103
+      - work/psgitlite-property-20261103
     paths:
       - 'tests/psgitlite-native/**'
       - '.github/workflows/psgitlite-native-cloud.yml'
@@ -35,6 +36,7 @@ jobs:
         run: |
           .\tests\psgitlite-native\Test-Core.ps1
           .\tests\psgitlite-native\Test-Adversarial.ps1
+          .\tests\psgitlite-native\Test-Properties.ps1
 
   linux-powershell:
     name: Native Linux PowerShell Core
@@ -49,3 +51,4 @@ jobs:
         run: |
           ./tests/psgitlite-native/Test-Core.ps1
           ./tests/psgitlite-native/Test-Adversarial.ps1
+          ./tests/psgitlite-native/Test-Properties.ps1
