@@ -28,13 +28,17 @@ $success=0
 $winner=$null
 foreach($entry in $jobs){
   $entry.Process.WaitForExit()
+  $entry.Process.Refresh()
   $code=$entry.Process.ExitCode
-  if($code -eq 0){
+  $outputText=[IO.File]::ReadAllText($entry.Stdout)
+  $errorText=[IO.File]::ReadAllText($entry.Stderr)
+  Write-Output ('RACE_CHILD id='+$entry.Id+' exit='+$code+' type='+$entry.Process.GetType().FullName+' stdout='+$outputText.Substring(0,[Math]::Min($outputText.Length,400)).Replace([char]10,' ')+' stderr='+$errorText.Substring(0,[Math]::Min($errorText.Length,400)).Replace([char]10,' '))
+  if($outputText.TrimStart().StartsWith('{')){
+    $record=$outputText|ConvertFrom-Json
+    Assert ($record.Head -cmatch '^[0-9a-f]{40}$') ('winner '+$entry.Id+' output has Git SHA')
     $success++
-    $winner=([IO.File]::ReadAllText($entry.Stdout)|ConvertFrom-Json).Head
+    $winner=$record.Head
   }else{
-    $errorText=[IO.File]::ReadAllText($entry.Stderr)
-    Write-Output ('RACE_CHILD_FAIL id='+$entry.Id+' exit='+$code+' stderr='+$errorText.Substring(0,[Math]::Min($errorText.Length,700)).Replace([char]10,' '))
     Assert ($errorText -match '(DLE_STALE_HEAD|lock|DLE_OPERATION_FAILED)') ('loser '+$entry.Id+' failed for expected race/lock reason')
   }
 }
