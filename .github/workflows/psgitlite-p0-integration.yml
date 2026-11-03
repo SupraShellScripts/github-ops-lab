@@ -88,6 +88,9 @@ jobs:
       - name: Safe v2 Human/JSON/JSONL inspect
         shell: powershell
         run: ./tests/psgitlite-dle/Test-DleSafeInspect.ps1
+      - name: Read-only inspector command-scope isolation
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleInspectScope.ps1
       - name: Independent v1 writer CAS
         shell: powershell
         run: ./tests/psgitlite-dle/Test-DleConcurrency.ps1
@@ -194,6 +197,9 @@ jobs:
       - name: Safe v2 Human/JSON/JSONL inspect
         shell: pwsh
         run: ./tests/psgitlite-dle/Test-DleSafeInspect.ps1
+      - name: Read-only inspector command-scope isolation
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleInspectScope.ps1
       - name: Independent v1 writer CAS
         shell: pwsh
         run: ./tests/psgitlite-dle/Test-DleConcurrency.ps1
