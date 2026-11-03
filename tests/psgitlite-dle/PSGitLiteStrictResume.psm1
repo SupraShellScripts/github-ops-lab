@@ -3,10 +3,11 @@
 # Does NOT change the existing writer, claim authorization or execute actions.
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-Import-Module (Join-Path $PSScriptRoot 'PSGitLiteDle.psm1') -Force
+# Caller imports PSGitLiteDle.psm1 once. Avoid nested -Force module reload.
 function Get-GitLiteDleStrictResume {
   [CmdletBinding()]param([Parameter(Mandatory)][string]$RepositoryPath,
     [Parameter(Mandatory)][string]$WorksetId)
+  if(-not (Get-Command Get-GitLiteDleSnapshot -ErrorAction SilentlyContinue)){throw 'DLE_CORE_NOT_IMPORTED'}
   $snapshot=Get-GitLiteDleSnapshot -RepositoryPath $RepositoryPath -WorksetId $WorksetId
   if(!$snapshot.Head){
     $verdict=if($snapshot.Recovery -ceq 'LOCK_RECONCILE_REQUIRED'){'RECONCILE_REQUIRED'}else{'CREATE_CHECKPOINT'}
