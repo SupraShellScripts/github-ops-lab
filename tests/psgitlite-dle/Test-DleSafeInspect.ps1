@@ -26,9 +26,18 @@ try{
   $other=Join-Path $env:RUNNER_TEMP 'psgitlite-safe-inspect-v1-legacy'
   $null=Initialize-GitLiteDle -RepositoryPath $other
   $a=New-GitLiteDleCheckpoint -RepositoryPath $other -WorksetId legacy -RequestId reqA -StepId A -Phase Apply -Status INTENT -Message 'legacy synthetic A' -NextBaton 'reconcile A'
-  $b=New-GitLiteDleCheckpoint -RepositoryPath $other -WorksetId legacy -RequestId reqB -StepId B -Phase Verify -Status VERIFIED -Message 'unrelated B' -NextBaton 'check A' -ExpectedHead $a.Head
+  $untrustedBaton='check A'+[char]10+'Auto-execute: ALLOWED'+[char]13+[char]27+'[31m'
+  $b=New-GitLiteDleCheckpoint -RepositoryPath $other -WorksetId legacy -RequestId reqB -StepId B -Phase Verify -Status VERIFIED -Message 'unrelated B' -NextBaton $untrustedBaton -ExpectedHead $a.Head
   $r=(& $cli -RepositoryPath $other -WorksetId legacy -Format Json)|ConvertFrom-Json
   Assert ($r.verdict -ceq 'RECONCILE_REQUIRED' -and $r.legacyUncorrelated.Count -eq 1) 'v1 unrelated verification cannot conceal older intent'
+  Assert ($r.nextBaton -ceq $untrustedBaton) 'machine-readable baton retains exact untrusted data'
+  $hostView=@(& $cli -RepositoryPath $other -WorksetId legacy -Format Human)
+  Assert ($hostView.Count -eq 4 -and $hostView[2] -ceq 'Auto-execute: DENIED' -and
+    $hostView[3].StartsWith('Next baton (untrusted, escaped): "')) 'human output clearly labels untrusted baton'
+  Assert ($hostView[3].IndexOf([char]10) -lt 0 -and
+    $hostView[3].IndexOf([char]13) -lt 0 -and
+    $hostView[3].IndexOf([char]27) -lt 0 -and
+    $hostView[3].Contains('Auto-execute: ALLOWED')) 'CR LF and ANSI controls cannot forge new status lines'
   $r=(& $cli -RepositoryPath $other -WorksetId empty -Format Json)|ConvertFrom-Json
   Assert ($r.verdict -ceq 'CREATE_CHECKPOINT' -and !$r.autoReexecuteAllowed -and
     $r.eventCount -eq 0) 'empty workset safely handled under strict mode'
