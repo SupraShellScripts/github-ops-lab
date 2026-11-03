@@ -1,0 +1,38 @@
+name: PSGitLite v2 concurrent writer native qualification
+on:
+  push:
+    branches:
+      - work/psgitlite-v2-race-20261103
+    paths:
+      - 'tests/psgitlite-dle/TestOnly-V2RaceWorker.ps1'
+      - 'tests/psgitlite-dle/Test-DleV2Concurrency.ps1'
+      - '.github/workflows/psgitlite-v2-race.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: psgitlite-v2-race
+  cancel-in-progress: false
+jobs:
+  windows_v2_race:
+    name: Windows PowerShell 5.1 v2 CAS race
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Two independent Windows PowerShell processes
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleV2Concurrency.ps1
+  linux_v2_race:
+    name: Linux PowerShell v2 CAS race
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Two independent Linux PowerShell processes
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleV2Concurrency.ps1
