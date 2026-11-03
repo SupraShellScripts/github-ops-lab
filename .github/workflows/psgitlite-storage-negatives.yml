@@ -1,0 +1,41 @@
+name: PSGitLite Git object redirection native negatives
+on:
+  push:
+    branches:
+      - work/psgitlite-storage-negative-20261103
+    paths:
+      - 'tests/psgitlite-dle/Test-DleObjectRedirectNative.ps1'
+      - '.github/workflows/psgitlite-storage-negatives.yml'
+permissions:
+  contents: read
+concurrency:
+  group: psgitlite-storage-negative
+  cancel-in-progress: false
+jobs:
+  native-object-store-negatives:
+    name: Git object store redirect defenses
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            shell: powershell
+          - os: ubuntu-24.04
+            shell: pwsh
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify PowerShell runtime
+        shell: ${{ matrix.shell }}
+        run: |
+          Write-Output ('PS version='+$PSVersionTable.PSVersion.ToString())
+          if ($env:RUNNER_OS -eq 'Windows' -and $PSVersionTable.PSVersion.Major -ne 5) { throw 'WINPS5_REQUIRED' }
+      - name: Object-store symlink and file guard
+        shell: ${{ matrix.shell }}
+        run: ./tests/psgitlite-dle/Test-DleObjectRedirectNative.ps1
+      - name: Full DLE ancestry regression
+        shell: ${{ matrix.shell }}
+        run: ./tests/psgitlite-dle/Test-DleDeepNegative.ps1
