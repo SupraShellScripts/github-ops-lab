@@ -1,0 +1,44 @@
+name: Public synthetic agent read-tool integration
+on:
+  push:
+    branches:
+      - work/ps-seed-toolbelt-20261103
+    paths:
+      - 'tests/seed-toolbelt/**'
+      - '.github/workflows/seed-agent-tool-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seed-agent-read-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-ps51:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Native PowerShell 5.1 agent read-tool tests
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'Requires PS5.1' }
+          .\tests\seed-toolbelt\Test-SeedToolbelt.ps1
+          .\tests\seed-toolbelt\Test-SeedAgentReadTool.ps1
+
+  linux-pwsh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Linux pwsh agent read-tool tests
+        shell: pwsh
+        run: |
+          ./tests/seed-toolbelt/Test-SeedToolbelt.ps1
+          ./tests/seed-toolbelt/Test-SeedAgentReadTool.ps1
