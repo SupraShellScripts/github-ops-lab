@@ -31,7 +31,9 @@ jobs:
           Write-Output ('Windows PowerShell ' + $PSVersionTable.PSVersion.ToString())
       - name: Execute pure-PowerShell module with independent Git oracle
         shell: powershell
-        run: .\tests\psgitlite-native\Test-Core.ps1
+        run: |
+          .\tests\psgitlite-native\Test-Core.ps1
+          .\tests\psgitlite-native\Test-Pack.ps1
 
   linux-powershell:
     name: Native Linux PowerShell Core
@@ -43,4 +45,6 @@ jobs:
           persist-credentials: false
       - name: Execute pure-PowerShell module with independent Git oracle
         shell: pwsh
-        run: ./tests/psgitlite-native/Test-Core.ps1
+        run: |
+          ./tests/psgitlite-native/Test-Core.ps1
+          ./tests/psgitlite-native/Test-Pack.ps1
