@@ -61,3 +61,12 @@ Project authority lives in private AIrea51 #23, under #22, with active AIrea51 L
 3. Extend test coverage for security on untrusted repository paths, Windows case collisions, resource bounds, OID formats, multi-process races and varied filesystem faults.
 4. Integrate the verified read-only + checkpoint backend with AIrea51's existing dispatcher and durable handoff format only under separate owner acceptance.
 5. Admit capabilities on real host after OS language mode, filesystem, code-loading, credential, egress and signer policy checks. Preserve the Git-less signed-capsule path when the Git engine is not admitted.
+
+
+## Optional AIrea51 handoff observer (synthetic-tested)
+
+Invoke-DleHandoffObserve.ps1 is an additive input adapter, not an alternate authority. Given a locally admitted AIrea51 ProjectRoot and an isolated DLE RepositoryPath, it hashes the existing agent-exchange/current.json bytes, validates its version, repository identity and relative prompt/report path scope, and records an OBSERVED event with only the hash and minimal AGENTS.md cold-start instruction. It **never rewrites current.json**, reads no private source files named by that pointer, and does not declare approval/verified external effects. A stable digest produces an idempotent request ID; a changed handoff produces a distinct event under expected-head CAS.
+
+Test-DleHandoff.ps1 uses a public synthetic current.json containing a sentinel next action, proves sentinel text stays out of the DLE/event output, verifies exact SHA256 linkage and idempotency, rejects a traversal promptPath, records a changed pointer as a new Git commit, and checks independent native Git fsck.
+
+The observer is included in the source-only distribution. Its passing synthetic tests do NOT admit real private AIrea51 handoff integration or restricted-host deployment. No owner/current handoff changes result from this workcell.
