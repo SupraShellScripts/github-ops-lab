@@ -14,9 +14,9 @@ function Refuses([scriptblock]$block,[string]$name) {
   try{$null=& $block}catch{$rejected=$true}
   Assert $rejected $name
 }
-function Oracle([string]$root,[string[]]$args) {
-  $lines=@(& git -C $root @args 2>&1)
-  if($LASTEXITCODE -ne 0){throw ('Git oracle failure: '+($args -join ' '))}
+function Oracle([string]$root,[string[]]$GitArguments) {
+  $lines=@(& git -C $root @GitArguments 2>&1)
+  if($LASTEXITCODE -ne 0){throw ('Git oracle failure: '+($GitArguments -join ' '))}
   return ,([string[]]$lines)
 }
 function EqualBytes([byte[]]$a,[byte[]]$b) {
