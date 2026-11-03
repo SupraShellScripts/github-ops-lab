@@ -50,6 +50,15 @@ jobs:
       - name: Verify stale-lock recovery in fresh process
         shell: powershell
         run: .\tests\psgitlite-dle\Test-DleCrash.ps1 -Mode recover
+      - name: Independent concurrent writer CAS
+        shell: powershell
+        run: .\tests\psgitlite-dle\Test-DleConcurrency.ps1
+      - name: Build source-only package
+        shell: powershell
+        run: .\tests\psgitlite-dle\Test-DlePackage.ps1 -Mode build
+      - name: Deploy and smoke package in clean environment
+        shell: powershell
+        run: .\tests\psgitlite-dle\Test-DlePackage.ps1 -Mode smoke
 
   ubuntu-pwsh-dle-recovery:
     name: Linux PowerShell DLE / restart / negative
@@ -82,3 +91,12 @@ jobs:
       - name: Verify stale-lock recovery in fresh process
         shell: pwsh
         run: ./tests/psgitlite-dle/Test-DleCrash.ps1 -Mode recover
+      - name: Independent concurrent writer CAS
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleConcurrency.ps1
+      - name: Build source-only package
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DlePackage.ps1 -Mode build
+      - name: Deploy and smoke package in clean environment
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DlePackage.ps1 -Mode smoke
