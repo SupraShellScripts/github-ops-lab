@@ -26,6 +26,7 @@ try{
   Assert ($first.status -ceq 'OBSERVED' -and $first.authority -ceq 'OBSERVED_NOT_AUTHENTICATED') 'handoff is observation not trusted authorization'
   $snapshot=Get-GitLiteDleSnapshot -RepositoryPath $repo -WorksetId $doc.handoffId
   Assert ($snapshot.Head -ceq $first.head -and $snapshot.Recovery -ceq 'RECONCILE_REQUIRED') 'handoff observed into Git-backed DLE event'
+  Write-Output ('DLE_HANDOFF_DIGEST expected='+('sha256:'+$first.handoffDigestSha256)+' observed='+[string]$snapshot.Event.evidenceRefs[0])
   Assert ($snapshot.Event.evidenceRefs[0] -ceq ('sha256:'+$first.handoffDigestSha256)) 'original handoff bytes linked by SHA256'
   Assert ($snapshot.NextBaton -match 'AGENTS.md' -and $snapshot.Event.message -notmatch 'SECRET_MARKER') 'minimal cold-start baton without source/private nextActions'
   Assert ([IO.File]::ReadAllText($pointer) -match 'SECRET_MARKER') 'observer never rewrites existing authoritative handoff pointer'
