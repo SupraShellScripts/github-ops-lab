@@ -13,8 +13,22 @@
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-Import-Module (Join-Path $PSScriptRoot 'PSGitLiteDle.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'PSGitLiteRecoveryV2.psm1')
+# The recovery module resolves DLE commands by name, so both imports
+# must be visible during the call. Preserve any caller-owned modules and clean
+# up only those this observer introduces after rendering (success or failure).
+$enginePath=Join-Path $PSScriptRoot 'PSGitLiteDle.psm1'
+$recoveryPath=Join-Path $PSScriptRoot 'PSGitLiteRecoveryV2.psm1'
+$corePath=Join-Path (Split-Path $PSScriptRoot -Parent) 'psgitlite-native/PSGitLiteCore.psm1'
+$modulePaths=@($enginePath,$recoveryPath,$corePath)
+$alreadyLoaded=@{}
+foreach($modulePath in $modulePaths){
+  $alreadyLoaded[$modulePath]=@(
+    Get-Module | Where-Object { $_.Path -ceq $modulePath }
+  ).Count -gt 0
+}
+try {
+Import-Module $enginePath -ErrorAction Stop
+Import-Module $recoveryPath -ErrorAction Stop
 $decision=Get-PSGitLiteDleSafeResume -RepositoryPath $RepositoryPath -WorksetId $WorksetId
 $assessment=$decision.Assessment
 $pending=@()
@@ -49,13 +63,24 @@ switch($Format){
     Write-Output ('Pending='+$pending.Count+' Failed='+$failures.Count+' Legacy='+$legacy.Count)
     Write-Output 'Auto-execute: DENIED'
     if($out.nextBaton){
-      # Baton content is read from a Git object, not an instruction or grant.
-      # Render it as one escaped JSON string so CR/LF/ANSI controls cannot
-      # forge additional human-facing status lines.
+      # Git baton contents are untrusted. Do not emit raw terminal controls
+      # or multiline status-looking output from the Human renderer.
       $quoted=ConvertTo-Json -InputObject ([string]$out.nextBaton) -Compress
       Write-Output ('Next baton (untrusted, escaped): '+$quoted)
     }
   }
   'Json' {Write-Output (ConvertTo-Json -InputObject $out -Depth 8 -Compress)}
   'Jsonl' {Write-Output (ConvertTo-Json -InputObject $out -Depth 8 -Compress)}
+}
+}finally {
+  # Never unload a module that was already present in the caller's session.
+  # The order matters because the DLE module itself imports PSGitLiteCore.
+  foreach($modulePath in @($recoveryPath,$enginePath,$corePath)){
+    if(-not $alreadyLoaded[$modulePath]){
+      $newModules=@(Get-Module | Where-Object { $_.Path -ceq $modulePath })
+      foreach($module in $newModules){
+        Remove-Module -ModuleInfo $module -Force -ErrorAction SilentlyContinue
+      }
+    }
+  }
 }
