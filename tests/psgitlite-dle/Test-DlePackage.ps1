@@ -11,7 +11,8 @@ $root=[IO.Path]::Combine($env:RUNNER_TEMP,'psgitlite-dle-distribution')
 $files=@(
   'psgitlite-native/PSGitLiteCore.psm1',
   'psgitlite-dle/PSGitLiteDle.psm1',
-  'psgitlite-dle/Invoke-GitLiteDle.ps1'
+  'psgitlite-dle/Invoke-GitLiteDle.ps1',
+  'psgitlite-dle/Invoke-DleHandoffObserve.ps1'
 )
 if($Mode -eq 'build'){
   if([IO.Directory]::Exists($root)){throw 'DLE_PACKAGE_ALREADY_EXISTS'}
@@ -38,7 +39,7 @@ if($Mode -eq 'build'){
 else{
   $manifestPath=Join-Path $root 'manifest.json'
   $manifest=[IO.File]::ReadAllText($manifestPath)|ConvertFrom-Json
-  Assert ($manifest.schemaVersion -ceq 'psgitlite.dle-distribution.v1' -and $manifest.files.Count -eq 3) 'clean package manifest schema'
+  Assert ($manifest.schemaVersion -ceq 'psgitlite.dle-distribution.v1' -and $manifest.files.Count -eq 4) 'clean package manifest schema'
   foreach($file in $manifest.files){
     $path=[IO.Path]::Combine($root,$file.path.Replace('/',[IO.Path]::DirectorySeparatorChar))
     $hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
