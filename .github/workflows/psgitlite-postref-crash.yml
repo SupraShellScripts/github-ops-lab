@@ -1,0 +1,59 @@
+name: PSGitLite post-ref commit crash native qualification
+on:
+  push:
+    branches:
+      - work/psgitlite-postref-crash-20261103
+    paths:
+      - 'tests/psgitlite-dle/Test-DleCrashAfterRef.ps1'
+      - '.github/workflows/psgitlite-postref-crash.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: psgitlite-postref-crash
+  cancel-in-progress: false
+jobs:
+  windows_postref:
+    name: Windows PowerShell 5.1 lost-ack receipt
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Prepare and terminate after ref promotion
+        id: hardkill
+        shell: powershell
+        continue-on-error: true
+        run: ./tests/psgitlite-dle/Test-DleCrashAfterRef.ps1 -Mode interrupt
+      - name: Recover from lost completion receipt
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleCrashAfterRef.ps1 -Mode recover
+      - name: Require genuine interrupted process
+        if: always()
+        shell: powershell
+        run: |
+          $result='${{ steps.hardkill.outcome }}'
+          if($result -cne 'failure'){throw ('EXPECTED_HARDKILL_NOT_OBSERVED '+$result)}
+  linux_postref:
+    name: Linux PowerShell lost-ack receipt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Prepare and terminate after ref promotion
+        id: hardkill
+        shell: pwsh
+        continue-on-error: true
+        run: ./tests/psgitlite-dle/Test-DleCrashAfterRef.ps1 -Mode interrupt
+      - name: Recover from lost completion receipt
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleCrashAfterRef.ps1 -Mode recover
+      - name: Require genuine interrupted process
+        if: always()
+        shell: pwsh
+        run: |
+          $result='${{ steps.hardkill.outcome }}'
+          if($result -cne 'failure'){throw ('EXPECTED_HARDKILL_NOT_OBSERVED '+$result)}
