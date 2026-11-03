@@ -67,7 +67,9 @@ try{
     Assert ($branches.Count -eq 2 -and @($branches|Where-Object{$_.Current}).Count -eq 1) 'packed and loose branch refs recognized'
     Assert (($branches | Where-Object{$_.Branch -eq 'feature/synthetic'}).Count -ge 1) 'feature branch listed'
     $log=@(Get-GitLiteFirstParentLog -RepositoryPath $root -MaxCount 10)
-    $gitLog=@(Invoke-Oracle $root @('rev-list','--first-parent','--max-count=10','HEAD'))
+    $gitLog=@(& git -C $root rev-list --first-parent --max-count=10 HEAD)
+    if($LASTEXITCODE -ne 0){throw 'Independent Git log oracle failed'}
+    Write-Output ('HISTORY_COUNTS native='+$gitLog.Count+' powershell='+$log.Count)
     Assert ($log.Count -eq 10 -and $gitLog.Count -eq 10) 'first-parent history count'
     for($i=0;$i -lt 10;$i++){if($log[$i].Sha -cne $gitLog[$i]){throw 'Git first-parent history mismatch'}}
     Assert $true 'first-parent SHA history matches native Git'
