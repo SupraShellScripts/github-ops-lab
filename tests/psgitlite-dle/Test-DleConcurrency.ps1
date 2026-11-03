@@ -34,6 +34,7 @@ foreach($entry in $jobs){
     $winner=([IO.File]::ReadAllText($entry.Stdout)|ConvertFrom-Json).Head
   }else{
     $errorText=[IO.File]::ReadAllText($entry.Stderr)
+    Write-Output ('RACE_CHILD_FAIL id='+$entry.Id+' exit='+$code+' stderr='+$errorText.Substring(0,[Math]::Min($errorText.Length,700)).Replace([char]10,' '))
     Assert ($errorText -match '(DLE_STALE_HEAD|lock|DLE_OPERATION_FAILED)') ('loser '+$entry.Id+' failed for expected race/lock reason')
   }
 }
