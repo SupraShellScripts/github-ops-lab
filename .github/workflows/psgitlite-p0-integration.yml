@@ -1,0 +1,223 @@
+name: PSGitLite P0 consolidated public native qualification
+on:
+  push:
+    branches:
+      - work/psgitlite-p0-consolidated-20261103
+    paths:
+      - 'tests/psgitlite-native/**'
+      - 'tests/psgitlite-dle/**'
+      - '.github/workflows/psgitlite-p0-integration.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'tests/psgitlite-native/**'
+      - 'tests/psgitlite-dle/**'
+      - '.github/workflows/psgitlite-p0-integration.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: psgitlite-p0-consolidated
+  cancel-in-progress: false
+jobs:
+  winps51:
+    name: windows-2022 integrated DLE suite
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Assert correct native interpreter
+        shell: powershell
+        run: |
+          Write-Output ('Native PowerShell '+$PSVersionTable.PSVersion.ToString())
+          if ($env:RUNNER_OS -eq 'Windows' -and $PSVersionTable.PSVersion.Major -ne 5) { throw 'WINPS51_REQUIRED' }
+      - name: Native Git object primitive tests
+        shell: powershell
+        run: ./tests/psgitlite-native/Test-Core.ps1
+      - name: Native pack and delta oracle tests
+        shell: powershell
+        run: ./tests/psgitlite-native/Test-Pack.ps1
+      - name: DLE v1 prepare
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode prepare
+      - name: DLE v1 fresh-process resume
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode resume
+      - name: DLE v1 corruption/ref negatives
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode faults
+      - name: Human JSON and JSONL CLI
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleCli.ps1
+      - name: Multilingual and adversarial refs
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleSecurity.ps1
+      - name: Deep ancestor/case collision/lock
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleDeepNegative.ps1
+      - name: Legacy strict resume
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleStrictResume.ps1
+      - name: Synthetic handoff observation
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleHandoff.ps1
+      - name: Effect-correlated v2 state model
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-PSGitLiteRecoveryV2.ps1
+      - name: Legacy v1-to-v2 read-only gate
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-PSGitLiteRecoveryLegacy.ps1
+      - name: v2 Git checkpoint prepare
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleV2Store.ps1 -Mode prepare
+      - name: v2 Git checkpoint fresh-process resume
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleV2Store.ps1 -Mode resume
+      - name: v2 migrate/downgrade negatives
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleV2Store.ps1 -Mode negative
+      - name: Safe v2 Human/JSON/JSONL inspect
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleSafeInspect.ps1
+      - name: Independent v1 writer CAS
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleConcurrency.ps1
+      - name: Independent v2 writer CAS
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleV2Concurrency.ps1
+      - name: Object storage redirection negatives
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleObjectRedirectNative.ps1
+      - name: Source-only v2 package build
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DlePackage.ps1 -Mode build
+      - name: Source-only v2 clean-room smoke
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DlePackage.ps1 -Mode smoke
+      - name: Crash before ref promotion (expected failure)
+        id: before_ref
+        continue-on-error: true
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleCrash.ps1 -Mode interrupt
+      - name: Fresh process pre-ref recovery
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleCrash.ps1 -Mode recover
+      - name: Crash after ref promotion (expected failure)
+        id: after_ref
+        continue-on-error: true
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleCrashAfterRef.ps1 -Mode interrupt
+      - name: Fresh process post-ref recovery
+        shell: powershell
+        run: ./tests/psgitlite-dle/Test-DleCrashAfterRef.ps1 -Mode recover
+      - name: Require both intentional process terminations
+        if: always()
+        shell: powershell
+        run: |
+          $pre='${{ steps.before_ref.outcome }}'
+          $post='${{ steps.after_ref.outcome }}'
+          if($pre -cne 'failure' -or $post -cne 'failure') { throw ('HARD_KILL_NOT_OBSERVED pre='+$pre+' post='+$post) }
+          Write-Output 'PSGITLITE_INTEGRATED_KILL_BOUNDARIES_PASS'
+  linux_pwsh:
+    name: ubuntu-24.04 integrated DLE suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Assert correct native interpreter
+        shell: pwsh
+        run: |
+          Write-Output ('Native PowerShell '+$PSVersionTable.PSVersion.ToString())
+          if ($env:RUNNER_OS -eq 'Windows' -and $PSVersionTable.PSVersion.Major -ne 5) { throw 'WINPS51_REQUIRED' }
+      - name: Native Git object primitive tests
+        shell: pwsh
+        run: ./tests/psgitlite-native/Test-Core.ps1
+      - name: Native pack and delta oracle tests
+        shell: pwsh
+        run: ./tests/psgitlite-native/Test-Pack.ps1
+      - name: DLE v1 prepare
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode prepare
+      - name: DLE v1 fresh-process resume
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode resume
+      - name: DLE v1 corruption/ref negatives
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-Dle.ps1 -Mode faults
+      - name: Human JSON and JSONL CLI
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleCli.ps1
+      - name: Multilingual and adversarial refs
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleSecurity.ps1
+      - name: Deep ancestor/case collision/lock
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleDeepNegative.ps1
+      - name: Legacy strict resume
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleStrictResume.ps1
+      - name: Synthetic handoff observation
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleHandoff.ps1
+      - name: Effect-correlated v2 state model
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-PSGitLiteRecoveryV2.ps1
+      - name: Legacy v1-to-v2 read-only gate
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-PSGitLiteRecoveryLegacy.ps1
+      - name: v2 Git checkpoint prepare
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleV2Store.ps1 -Mode prepare
+      - name: v2 Git checkpoint fresh-process resume
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleV2Store.ps1 -Mode resume
+      - name: v2 migrate/downgrade negatives
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleV2Store.ps1 -Mode negative
+      - name: Safe v2 Human/JSON/JSONL inspect
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleSafeInspect.ps1
+      - name: Independent v1 writer CAS
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleConcurrency.ps1
+      - name: Independent v2 writer CAS
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleV2Concurrency.ps1
+      - name: Object storage redirection negatives
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleObjectRedirectNative.ps1
+      - name: Source-only v2 package build
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DlePackage.ps1 -Mode build
+      - name: Source-only v2 clean-room smoke
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DlePackage.ps1 -Mode smoke
+      - name: Crash before ref promotion (expected failure)
+        id: before_ref
+        continue-on-error: true
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleCrash.ps1 -Mode interrupt
+      - name: Fresh process pre-ref recovery
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleCrash.ps1 -Mode recover
+      - name: Crash after ref promotion (expected failure)
+        id: after_ref
+        continue-on-error: true
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleCrashAfterRef.ps1 -Mode interrupt
+      - name: Fresh process post-ref recovery
+        shell: pwsh
+        run: ./tests/psgitlite-dle/Test-DleCrashAfterRef.ps1 -Mode recover
+      - name: Require both intentional process terminations
+        if: always()
+        shell: pwsh
+        run: |
+          $pre='${{ steps.before_ref.outcome }}'
+          $post='${{ steps.after_ref.outcome }}'
+          if($pre -cne 'failure' -or $post -cne 'failure') { throw ('HARD_KILL_NOT_OBSERVED pre='+$pre+' post='+$post) }
+          Write-Output 'PSGITLITE_INTEGRATED_KILL_BOUNDARIES_PASS'
