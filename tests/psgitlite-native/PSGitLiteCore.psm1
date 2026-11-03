@@ -26,8 +26,16 @@ function Read-Lite32([byte[]]$Bytes,[int]$Offset) {
   for($i=0;$i -lt 4;$i++){$n=($n -shl 8) -bor [uint64]$Bytes[$Offset+$i]}
   return [uint32]$n
 }
+function Assert-LiteNoReparse([string]$Path) {
+  if([IO.Directory]::Exists($Path) -or [IO.File]::Exists($Path)){
+    if(([IO.File]::GetAttributes($Path) -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+      throw 'DLE_OBJECT_REPARSE_REFUSED'
+    }
+  }
+}
 function Assert-LiteRepo([string]$Path) {
   $root=[IO.Path]::GetFullPath($Path);$git=[IO.Path]::Combine($root,'.git')
+  foreach($part in @($root,$git,[IO.Path]::Combine($git,'objects'))){Assert-LiteNoReparse $part}
   if(-not [IO.Directory]::Exists($git)){throw 'Repository not initialized'}
   $h=[IO.File]::ReadAllText([IO.Path]::Combine($git,'HEAD')).Trim()
   if($h -cne 'ref: refs/heads/main'){throw 'Only main branch is supported'}
@@ -58,6 +66,8 @@ function New-GitLiteObject {
     $raw=$ms.ToArray();$id=Get-LiteSha $raw
     $dir=[IO.Path]::Combine($repo.Git,'objects',$id.Substring(0,2))
     $dest=[IO.Path]::Combine($dir,$id.Substring(2))
+    Assert-LiteNoReparse $dir
+    Assert-LiteNoReparse $dest
     if([IO.File]::Exists($dest)){return $id}
     [void][IO.Directory]::CreateDirectory($dir)
     $compressed=[IO.MemoryStream]::new()
@@ -78,7 +88,10 @@ function Get-GitLiteObject {
     [Parameter(Mandatory)][string]$Sha)
   if($Sha -cnotmatch '^[a-f0-9]{40}$'){throw 'Invalid object id'}
   $repo=Assert-LiteRepo $RepositoryPath
-  $file=[IO.Path]::Combine($repo.Git,'objects',$Sha.Substring(0,2),$Sha.Substring(2))
+  $objectDir=[IO.Path]::Combine($repo.Git,'objects',$Sha.Substring(0,2))
+  $file=[IO.Path]::Combine($objectDir,$Sha.Substring(2))
+  Assert-LiteNoReparse $objectDir
+  Assert-LiteNoReparse $file
   $z=[IO.File]::ReadAllBytes($file)
   if($z.Length -lt 7 -or $z[0] -ne 0x78 -or (($z[0]*256+$z[1])%31) -ne 0){throw 'Invalid zlib'}
   $input=[IO.MemoryStream]::new($z,$false)
