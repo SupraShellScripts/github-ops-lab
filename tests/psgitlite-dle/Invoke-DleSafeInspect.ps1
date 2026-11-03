@@ -24,7 +24,8 @@ $count=0
 if($null -ne $assessment){
   $pending=@($assessment.PendingEffects | ForEach-Object { [string]$_.EffectId })
   $failures=@($assessment.FailedEffects | ForEach-Object {
-    if($_.EffectId){[string]$_.EffectId}else{[string]$_.RequestId}
+    if($null -ne $_.PSObject.Properties['EffectId']){[string]$_.EffectId}
+    else{[string]$_.RequestId}
   })
   $legacy=@($assessment.LegacyUncorrelated | ForEach-Object { [string]$_.RequestId })
   $count=[int]$assessment.EventCount
@@ -40,7 +41,7 @@ $out=[ordered]@{
   legacyUncorrelated=@($legacy)
   autoReexecuteAllowed=$false
   authority='OBSERVATION_ONLY'
-  nextBaton=$decision.NextBaton
+  nextBaton=$(if($null -ne $decision.PSObject.Properties['NextBaton']){$decision.NextBaton}else{$null})
 }
 switch($Format){
   'Human' {
