@@ -27,10 +27,20 @@ function Get-DleHash([byte[]]$Bytes){
   $h=[Security.Cryptography.SHA256]::Create()
   try{return Get-DleHex $h.ComputeHash($Bytes)}finally{$h.Dispose()}
 }
+function Assert-DleNoReparse([string]$Path) {
+  if([IO.File]::Exists($Path) -or [IO.Directory]::Exists($Path)){
+    $flags=[IO.File]::GetAttributes($Path)
+    if(($flags -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'DLE_REPARSE_REFUSED'}
+  }
+}
 function Get-DleRepo([string]$Path){
   $root=[IO.Path]::GetFullPath($Path)
   $git=[IO.Path]::Combine($root,'.git')
   $head=[IO.Path]::Combine($git,'HEAD')
+  Assert-DleNoReparse $root
+  Assert-DleNoReparse $git
+  Assert-DleNoReparse ([IO.Path]::Combine($git,'objects'))
+  Assert-DleNoReparse ([IO.Path]::Combine($git,'refs'))
   if(-not [IO.Directory]::Exists($git) -or -not [IO.File]::Exists($head) -or
       [IO.File]::ReadAllText($head).Trim() -cne 'ref: refs/heads/main'){
     throw 'DLE_REPO_UNSUPPORTED'
@@ -47,7 +57,12 @@ function Initialize-GitLiteDle{
 }
 function Get-DleRef([object]$Repo,[string]$WorksetId){
   Assert-DleId $WorksetId
-  return [IO.Path]::Combine($Repo.Git,'refs','airea51','dle',$WorksetId)
+  $refs=[IO.Path]::Combine($Repo.Git,'refs')
+  $area=[IO.Path]::Combine($refs,'airea51')
+  $dle=[IO.Path]::Combine($area,'dle')
+  $target=[IO.Path]::Combine($dle,$WorksetId)
+  foreach($path in @($refs,$area,$dle,$target)){Assert-DleNoReparse $path}
+  return $target
 }
 function Read-DleRef([string]$Path){
   if(-not [IO.File]::Exists($Path)){return $null}
