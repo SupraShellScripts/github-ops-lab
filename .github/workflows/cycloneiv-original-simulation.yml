@@ -1,0 +1,31 @@
+name: Cyclone IV synthetic Verilog simulation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/cycloneiv-original-simulation.yml'
+      - 'fixtures/fpga/quartus25-minimal/synthetic_top.v'
+      - 'fixtures/fpga/quartus25-minimal/synthetic_top_tb.v'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-simulation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - name: Checkout public sources
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Compile and simulate original RTL
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends iverilog
+          iverilog -g2012 -s synthetic_top_tb -o "$RUNNER_TEMP/synthetic-testbench" fixtures/fpga/quartus25-minimal/synthetic_top.v fixtures/fpga/quartus25-minimal/synthetic_top_tb.v
+          vvp "$RUNNER_TEMP/synthetic-testbench" | tee "$RUNNER_TEMP/synthetic-simulation.txt"
+          grep -Fx 'SIM_PASS original synthetic counter' "$RUNNER_TEMP/synthetic-simulation.txt"
+          echo 'ORIGINAL_SYNTHETIC_RTL_SIM_PASS only; Quartus map/fit/STA NOT_RUN.' >> "$GITHUB_STEP_SUMMARY"

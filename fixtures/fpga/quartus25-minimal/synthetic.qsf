@@ -1,0 +1,5 @@
+set_global_assignment -name FAMILY "Cyclone IV E"
+set_global_assignment -name DEVICE EP4CE115F29C7
+set_global_assignment -name TOP_LEVEL_ENTITY synthetic_top
+set_global_assignment -name VERILOG_FILE synthetic_top.v
+set_global_assignment -name SDC_FILE synthetic.sdc

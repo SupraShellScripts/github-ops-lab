@@ -1,0 +1,30 @@
+# Quartus Prime Lite 25.1 OCI recovery — qualified prior art and scope
+
+Status: public-safe research/CI source only. This is **not** authorization to copy or publish Altera software, accept its EULA, or use private credentials in untrusted public PR workflows.
+
+## Existing solutions worth reusing
+
+| Public source | Primitive worth adapting | Mismatch / negative space |
+| --- | --- | --- |
+| [chriz2600/quartus-lite](https://github.com/chriz2600/quartus-lite) | Quartus invocation wrapper and Docker packaging | Old Debian Jessie base and historical Quartus; do not inherit obsolete images or downloads |
+| [raetro/sdk-docker-fpga](https://github.com/raetro/sdk-docker-fpga) | Device-family/version-specific headless Quartus images, Cyclone IV precedent | Published image versions documented through 23.1; no proven Lite 25.1 |
+| [theypsilon/quartus-lite-c5-dockerized](https://github.com/theypsilon/quartus-lite-c5-dockerized) | Multi-stage heavy/slim approach with shared runtime and deterministic vendor checksum | Older Cyclone V target; image publication rights not transferable |
+| [cdsteinkuehler/QuartusBuildVMs](https://github.com/cdsteinkuehler/QuartusBuildVMs) | Installed toolchain can be kept independent of FPGA design and invoked by mounted workspace | Old tool version and distribution assumptions |
+| [Altera official container images](https://hub.docker.com/r/alterafpga/quartus-std) | Maintainer-backed OCI interface, rebaseable shared layers, design mounts | Currently official Standard/Pro; Standard paid licensed, not Lite; no official Lite 25.1 image verified |
+
+Never assume a MIT-licensed Dockerfile provides rights to redistribute Altera's installer or installed Quartus content. Altera Lite needs no license *file*, but EULA agreement and third-party distribution policy are independent gates.
+
+## Targeted build architecture
+
+1. **Public open-source foundation**, current implemented `docker/fpga/quartus25-runtime-base/Dockerfile`: minimal Ubuntu 24.04 userspace, non-root default user, no vendor downloads, no token, no tools in the image. The build context allows only the Dockerfile through its dedicated `.dockerignore`. Its real public Actions workflow `.github/workflows/quartus25-oci-foundation.yml` builds and executes a source-only smoke test, **without pushing** any OCI image.
+2. **Verified private vendor input**: original owner-controlled TAR `Quartus-lite-25.1std.0.1129-linux.tar` from Drive, official vendor SHA1 `833c96461eb55e0124f358c8ec9322ba1fbd5286`; Cyclone IV `cyclone-25.1std.0.1129.qdz` SHA1 `835d2b1732549294eed625b692d044135499b5e8`. Vendor's archive + unpack + install estimate ~40.1 GB, so budget **>=55 GiB free scratch** for source installation and separately estimate multi-stage OCI snapshot overhead. Run `scripts/fpga/quartus25_complete_tar_probe.py --archives <actor-owned-local-private-dir>`; the probe reads existing files only, verifies both SHA1 values, hashes SHA256, lists TAR metadata without extracting, detects paths/links requiring manual review and checks disk.
+3. **Toolchain runtime**: one trusted, admitted actor installs from the checked TAR according to official `setup.sh` / `QuartusLiteSetup` procedures only after explicit operator EULA approval. Keep installed tree outside public source. Validate real `quartus_sh --version`, presence of device EP4CE115F29C7, exact QPF/QSF/SDC, fit and TimeQuest before claiming device-native PASS.
+4. **Persistence:** GitHub Actions standard hosted machines are ephemeral; local Docker layers vanish with the machine, so a rebuilt local image is *not* a cross-run cache. Persistent OCI lives in a registry such as GHCR or a user's controlled private registry. The public OSS foundation can be made publicly available after review. Do **not** publish vendor-containing layers into public GHCR, Actions caches, artifacts, or downloadable PR logs. Private GHCR/toolchain layer remains an option only after EULA redistribution/access approval and explicit package visibility and quota qualification. Alternative is a private actor-controlled installed-tool filesystem mounted read-only into a public OSS runtime image; this preserves license and avoids repeated installation on a persistent self-hosted runner, at the cost of requiring an admitted sovereign/cloud persistent host.
+5. **Cross-repo access:** if registry publication is allowed, register package permission against exact authorized repositories and use minimal `GITHUB_TOKEN` package access. Never expose the private image or credentials to fork-triggered, PR-controlled or untrusted public workflows. Record image manifest digest and hashes, do not use mutable `latest` for build authority.
+6. **Outputs:** unsigned/immutable source manifest, `.sof` file hashes, fitter and timing reports, board/SoC contracts and paired Zephyr binaries; permission/classification review before public release. No artifact can be accepted as hardware qualification without HIL.
+
+## Real validation
+
+Public branch `experiment/quartus25-public-safe-cycloneiv-20261013` run [38413060767](https://github.com/SupraShellScripts/github-ops-lab/actions/runs/38413060767) at commit `cabca9ebcb984089497f41f6b9394b17ae4727a0`: native Ubuntu Actions executed **9/9 original TAR admission unit tests PASS**, isolated Docker build PASS, digest `sha256:a847cbcabc1e3048a90f0047fbbb33478fe795b0ef4c0809390e45b9b168c473`, resulting image size **138139573 bytes**, smoke under `--network none --read-only --cap-drop ALL --security-opt no-new-privileges` PASS. Local runner image only, **no OCI registry publication or vendor bytes**. Real TAR/QDZ hash, complete-TAR member inventory, installer/EULA, Quartus, fitter, TimeQuest and hardware have **not** been executed.
+
+References: [Altera 25.1 Linux official complete archive](https://www.altera.com/downloads/fpga-development-tools/quartus-prime-lite-edition-design-software-version-25-1-linux); [GitHub Packages billing](https://docs.github.com/en/billing/concepts/product-billing/github-packages); [GitHub Actions storage](https://docs.github.com/en/billing/concepts/product-billing/github-actions).

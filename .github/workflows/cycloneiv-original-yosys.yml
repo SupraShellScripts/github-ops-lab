@@ -1,0 +1,32 @@
+name: Original Cyclone IV RTL generic synthesis
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/cycloneiv-original-yosys.yml'
+      - 'fixtures/fpga/quartus25-minimal/synthetic_top.v'
+
+permissions:
+  contents: read
+
+jobs:
+  generic-synthesis:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Check out public original source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+
+      - name: Read original RTL and execute generic synthesis
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends yosys
+          yosys -V
+          sha256sum fixtures/fpga/quartus25-minimal/synthetic_top.v
+          yosys -Q -T -l "$RUNNER_TEMP/synthetic-yosys.log" -p 'read_verilog fixtures/fpga/quartus25-minimal/synthetic_top.v; hierarchy -check -top synthetic_top; synth -top synthetic_top; check -assert; stat'
+          test -s "$RUNNER_TEMP/synthetic-yosys.log"
+          echo 'GENERIC_OSS_SYNTH_PASS only. Quartus device map, fit, TimeQuest and HIL NOT_RUN.' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,29 @@
+name: Quartus 25.1 vendor admission self-test
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/fpga/quartus25_vendor_install.py'
+      - 'tests/test_quartus25_vendor_install.py'
+      - '.github/workflows/quartus25-vendor-admission-selftest.yml'
+      - 'docs/fpga-quartus25-toolchain-admission.md'
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout public-safe code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+      - name: Parse and qualify archive admission logic
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/fpga/quartus25_vendor_install.py
+          python3 -m unittest discover -s tests -p 'test_quartus25_vendor_install.py' -v
+          echo 'OFFLINE_ADMISSION_TEST_PASS; VENDOR_DOWNLOAD_NOT_RUN; EULA_NOT_ACCEPTED; QUARTUS_NOT_INSTALLED.' >> "$GITHUB_STEP_SUMMARY"
