@@ -1,0 +1,229 @@
+name: FRITZ!Box 7590 8.25 surface experiment
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/fritzbox-7590-825-surface.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FW_URL: https://download.avm.de/fritzbox/fritzbox-7590/deutschland/fritz.os/FRITZ.Box_7590-08.25.image
+      FW_NAME: FRITZ.Box_7590-08.25.image
+      EXPECTED_SIZE: '42393600'
+    steps:
+      - name: Install read-only analysis tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends curl file binutils squashfs-tools p7zip-full xz-utils zstd ripgrep
+
+      - name: Download and fingerprint official firmware
+        id: firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/fritz825"
+          mkdir -p "$work/report" "$work/payload" "$work/roots"
+          fw="$work/$FW_NAME"
+          curl --fail --location --retry 4 --retry-all-errors --silent --show-error "$FW_URL" -o "$fw"
+          bytes="$(stat -c '%s' "$fw")"
+          test "$bytes" = "$EXPECTED_SIZE"
+          sha256="$(sha256sum "$fw" | awk '{print $1}')"
+          sha512="$(sha512sum "$fw" | awk '{print $1}')"
+          kind="$(file -b "$fw")"
+          {
+            echo '# FRITZ!Box 7590 FRITZ!OS 8.25 firmware evidence'
+            echo
+            echo "- Source: $FW_URL"
+            echo "- File: $FW_NAME"
+            echo "- Bytes: $bytes"
+            echo "- SHA-256: $sha256"
+            echo "- SHA-512: $sha512"
+            echo "- file(1): $kind"
+            echo "- Analysis runner: $(uname -a)"
+          } > "$work/report/provenance.md"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          echo "work=$work" >> "$GITHUB_OUTPUT"
+
+      - name: Unpack outer container and locate embedded filesystems
+        shell: bash
+        run: |
+          set -euo pipefail
+          work='${{ steps.firmware.outputs.work }}'
+          fw="$work/$FW_NAME"
+          report="$work/report"
+
+          # AVM .image files are commonly tar-based. Use only extraction/read operations.
+          if tar -tf "$fw" > "$report/outer-tar-list.txt" 2>"$report/outer-tar-error.txt"; then
+            tar -xf "$fw" -C "$work/payload"
+          else
+            7z l "$fw" > "$report/outer-7z-list.txt" || true
+            7z x -y -o"$work/payload" "$fw" >/dev/null || true
+          fi
+
+          find "$work/payload" -type f -printf '%P\t%s\n' | sort > "$report/payload-files.txt"
+          : > "$report/file-types.txt"
+          while IFS= read -r -d '' f; do
+            printf '%s\t%s\n' "${f#$work/payload/}" "$(file -b "$f")" >> "$report/file-types.txt"
+          done < <(find "$work/payload" -type f -print0)
+
+          # Scan payloads for SquashFS magic and extract each unique candidate.
+          python3 - "$work" <<'PY'
+          import pathlib, sys
+          work = pathlib.Path(sys.argv[1])
+          rows=[]
+          for p in (work/'payload').rglob('*'):
+              if not p.is_file() or p.stat().st_size < 4096:
+                  continue
+              try:
+                  data=p.read_bytes()
+              except Exception:
+                  continue
+              start=0
+              while True:
+                  off=data.find(b'hsqs', start)
+                  if off < 0: break
+                  rows.append((str(p.relative_to(work/'payload')), off, p.stat().st_size))
+                  start=off+4
+          with (work/'report'/'squashfs-offsets.tsv').open('w') as f:
+              for row in rows:
+                  f.write('%s\t%d\t%d\n' % row)
+          PY
+
+          n=0
+          while IFS=$'\t' read -r rel off size; do
+            [ -n "${rel:-}" ] || continue
+            n=$((n+1))
+            src="$work/payload/$rel"
+            candidate="$work/squashfs-$n.img"
+            dd if="$src" of="$candidate" bs=1 skip="$off" status=none
+            dest="$work/roots/root-$n"
+            if unsquashfs -d "$dest" "$candidate" >"$report/unsquashfs-$n.txt" 2>&1; then
+              printf '%s\t%s\t%s\n' "$n" "$rel" "$off" >> "$report/extracted-roots.tsv"
+            else
+              rm -rf "$dest"
+            fi
+            rm -f "$candidate"
+          done < "$report/squashfs-offsets.tsv"
+
+          # If the tar itself exposed a directory tree, include it as another analysis root.
+          if find "$work/payload" -type d -path '*/usr/www*' -print -quit | grep -q .; then
+            ln -s "$work/payload" "$work/roots/root-payload"
+          fi
+
+      - name: Build sanitized configuration-surface report
+        shell: bash
+        run: |
+          set -euo pipefail
+          work='${{ steps.firmware.outputs.work }}'
+          report="$work/report"
+
+          roots=()
+          while IFS= read -r -d '' d; do roots+=("$d"); done < <(find "$work/roots" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
+          if [ "${#roots[@]}" -eq 0 ]; then
+            while IFS= read -r -d '' d; do roots+=("$d"); done < <(find "$work/roots" -mindepth 1 -maxdepth 1 -type l -print0 2>/dev/null)
+          fi
+
+          {
+            echo '# Static configuration-surface findings'
+            echo
+            echo "Extracted analysis roots: ${#roots[@]}"
+            echo
+            echo 'This report contains only paths, identifiers, endpoint strings, counts, and hashes. No AVM source files or firmware payloads are retained.'
+          } > "$report/summary.md"
+
+          if [ "${#roots[@]}" -eq 0 ]; then
+            echo 'No filesystem root was extracted by the generic extractor.' >> "$report/summary.md"
+          else
+            # Inventory landmarks without copying their contents.
+            for root in "${roots[@]}"; do
+              find -L "$root" -type f \( \
+                -path '*/usr/www/*' -o \
+                -name 'ctlmgr' -o -name 'libctlmgr.so*' -o \
+                -name '*.cfg' -o -name '*.lua' -o -name '*.js' \
+              \) -printf '%P\n' 2>/dev/null || true
+            done | sort -u > "$report/interesting-paths.txt"
+
+            # Extract short functional endpoint/identifier strings only; never source lines.
+            : > "$report/api-v0-endpoints.txt"
+            : > "$report/lua-endpoints.txt"
+            : > "$report/topic-files.tsv"
+            topics='fax dns dnssrv dyndns dot wireguard vpn certificate letsencrypt acme dhcp landevice wlan wifi tam voip tel telephony filter parental portforward forwarding route myfritz backup update nas webdav smb dect aha smarthome'
+
+            for root in "${roots[@]}"; do
+              rg -a -o --no-filename '/api/v0/[A-Za-z0-9_./{}:-]+' "$root" 2>/dev/null || true
+              rg -a -o --no-filename '/(?:data|query|login_sid)\.lua' "$root" 2>/dev/null || true
+              for topic in $topics; do
+                rg -a -l -i --glob 'usr/www/**' --glob '*.lua' --glob '*.js' --glob '*.html' "$topic" "$root" 2>/dev/null \
+                  | sed "s#^$root/##" \
+                  | head -n 200 \
+                  | awk -v t="$topic" '{print t "\t" $0}' || true
+              done
+            done | sort -u > "$report/topic-files.tsv"
+
+            for root in "${roots[@]}"; do
+              rg -a -o --no-filename '/api/v0/[A-Za-z0-9_./{}:-]+' "$root" 2>/dev/null || true
+            done | sed 's/["'"'"'<>),;].*$//' | sort -u > "$report/api-v0-endpoints.txt"
+
+            for root in "${roots[@]}"; do
+              rg -a -o --no-filename '/(?:data|query|login_sid)\.lua' "$root" 2>/dev/null || true
+            done | sort -u > "$report/lua-endpoints.txt"
+
+            {
+              echo
+              echo '## Counts'
+              printf -- '- Interesting paths: %s\n' "$(wc -l < "$report/interesting-paths.txt")"
+              printf -- '- Distinct /api/v0 endpoint strings: %s\n' "$(wc -l < "$report/api-v0-endpoints.txt")"
+              printf -- '- Distinct legacy Lua endpoint strings: %s\n' "$(wc -l < "$report/lua-endpoints.txt")"
+              printf -- '- Topic/file associations: %s\n' "$(wc -l < "$report/topic-files.tsv")"
+              echo
+              echo '## Key landmarks present'
+              for needle in 'usr/www' 'ctlmgr' 'libctlmgr.so' 'data.lua' 'query.lua' 'login_sid.lua'; do
+                if grep -Fqi "$needle" "$report/interesting-paths.txt" "$report/lua-endpoints.txt" 2>/dev/null; then
+                  echo "- $needle: yes"
+                else
+                  echo "- $needle: not observed"
+                fi
+              done
+              echo
+              echo '## Topics represented in Web/UI files'
+              cut -f1 "$report/topic-files.tsv" | sort | uniq -c | sed 's/^/    /'
+            } >> "$report/summary.md"
+          fi
+
+          # Explicitly remove all downloaded/extracted proprietary material before artifact upload.
+          rm -f "$work/$FW_NAME"
+          rm -rf "$work/payload" "$work/roots"
+          find "$work" -maxdepth 1 -name 'squashfs-*.img' -delete
+
+          echo '--- sanitized summary ---'
+          cat "$report/summary.md"
+          echo '--- discovered api/v0 strings (first 100) ---'
+          head -n 100 "$report/api-v0-endpoints.txt" 2>/dev/null || true
+
+      - name: Verify artifact contains reports only
+        shell: bash
+        run: |
+          set -euo pipefail
+          work='${{ steps.firmware.outputs.work }}'
+          test ! -e "$work/$FW_NAME"
+          if find "$work/report" -type f -size +2M -print -quit | grep -q .; then
+            echo 'Refusing to upload unexpectedly large report file.' >&2
+            exit 1
+          fi
+          find "$work/report" -type f -printf '%P\t%s\n' | sort
+
+      - name: Upload sanitized evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: fritzbox-7590-8.25-surface-report
+          path: ${{ runner.temp }}/fritz825/report/
+          if-no-files-found: error
+          retention-days: 7
