@@ -24,6 +24,7 @@ jobs:
     uses: ./.github/workflows/powershell-compatibility.yml
     with:
       path: tests/fixtures/powershell-reusable-compatible
+      validator_ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
   real-windows-engines:
     name: Real WinPS 5.1 vs PS7
@@ -64,7 +65,7 @@ jobs:
           if ($comparison.crossEngineParseFailureCount -ne 1) { throw 'Expected exactly one cross-engine parse incompatibility.' }
 
       - name: Upload self-test evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: powershell-compat-selftest-windows
           path: evidence/*.json
