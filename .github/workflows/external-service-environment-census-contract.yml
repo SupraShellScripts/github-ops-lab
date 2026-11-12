@@ -1,0 +1,25 @@
+name: external-service-environment-census-contract
+on:
+  pull_request:
+    paths:
+      - "scripts/github/read_only_service_env_census.py"
+      - "tests/test_read_only_service_env_census.py"
+      - "docs/github-environment-census.md"
+      - ".github/workflows/external-service-environment-census-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Compile public source and tests
+        run: python3 -m py_compile scripts/github/read_only_service_env_census.py tests/test_read_only_service_env_census.py
+      - name: Offline synthetic, no account API/secret access
+        run: python3 -m unittest discover -s tests -p 'test_read_only_service_env_census.py' -v
