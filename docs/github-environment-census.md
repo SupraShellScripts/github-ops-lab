@@ -24,7 +24,7 @@ deployments, runners, workflows, or scheduled jobs.
 ```bash
 python3 scripts/github/read_only_service_env_census.py \
   --repo example-org/example-repo \
-  --output /tmp/example-repo-env-census-private.json
+  --output /tmp/example-repo-env-census-local.json
 ```
 
 Expected output contains normalized environment names and per-environment
